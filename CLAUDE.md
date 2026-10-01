@@ -11,7 +11,7 @@
 - DB: Supabase（Postgres）。スキーマは `supabase/schema.sql`
 - LLM: Claude API（Anthropic SDK）。プロンプトは `prompts/` 配下のMarkdownを読み込んで使う
 - X: X API v2（OAuth 2.0 PKCE / user context）。スコープ: tweet.read tweet.write users.read dm.read dm.write offline.access
-- 通知・承認: Slack（Block Kit のボタンで承認／修正／却下）
+- 通知・承認: Slack（Block Kit のボタンで承認／修正／却下）。送り先はチャンネル1つ（`SLACK_CHANNEL_ID`）で、先頭の【DM承認】【投稿承認】【アラート】で種類を区別する
 
 ## 絶対ルール
 - **人の承認なしに投稿しない。** `post_drafts.review_status = 'approved'` のものだけ投稿する

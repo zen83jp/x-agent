@@ -14,9 +14,8 @@ const schema = z.object({
 
   SLACK_BOT_TOKEN: z.string().startsWith("xoxb-"),
   SLACK_SIGNING_SECRET: z.string().min(1),
-  SLACK_CHANNEL_DM: z.string().min(1),
-  SLACK_CHANNEL_POSTS: z.string().min(1),
-  SLACK_CHANNEL_ALERTS: z.string().min(1),
+  /** 承認・通知をすべて送るチャンネル（C から始まる ID） */
+  SLACK_CHANNEL_ID: z.string().regex(/^C[A-Z0-9]+$/, "C から始まるチャンネル ID"),
 
   MEETING_URL: z.string().url(),
   CRON_SECRET: z.string().min(16),

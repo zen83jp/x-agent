@@ -2,7 +2,7 @@ import type { KnownBlock } from "@slack/web-api";
 import { after, NextResponse } from "next/server";
 import { env } from "@/lib/env";
 import { actionHandlers, blockActionsPayload, type BlockActionsPayload } from "@/lib/slack/actions";
-import { notifyAlert, postMessage, updateMessage } from "@/lib/slack/client";
+import { notifyAlert, postThreadReply, updateMessage } from "@/lib/slack/client";
 import { verifySlackSignature } from "@/lib/slack/verify";
 
 export const dynamic = "force-dynamic";
@@ -31,6 +31,11 @@ export async function POST(req: Request) {
   const parsed = blockActionsPayload.safeParse(raw);
   // block_actions 以外（モーダル送信など）は Phase 2 以降で対応。Slack にはエラーを返さない
   if (!parsed.success) return new NextResponse(null, { status: 200 });
+  // 通知チャンネル以外からの操作は受け付けない
+  if (parsed.data.container.channel_id !== env().SLACK_CHANNEL_ID) {
+    console.warn("action from unexpected channel", parsed.data.container.channel_id);
+    return new NextResponse(null, { status: 200 });
+  }
 
   after(() => handle(parsed.data));
   return new NextResponse(null, { status: 200 });
@@ -58,7 +63,7 @@ async function handle(p: BlockActionsPayload): Promise<void> {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     console.error("slack action failed", action.action_id, e);
-    await postMessage({ channel, threadTs: messageTs, text: `:warning: 要手動対応: ${msg}` }).catch(() =>
+    await postThreadReply({ channel, threadTs: messageTs, text: `:warning: 要手動対応: ${msg}` }).catch(() =>
       notifyAlert(`Slack アクション ${action.action_id} の処理に失敗: ${msg}`),
     );
   }

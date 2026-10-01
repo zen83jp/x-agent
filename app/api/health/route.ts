@@ -27,7 +27,7 @@ export async function GET(req: Request) {
   const summary = `X: ${xResult}\n本日の X API 使用額（推定）: $${spent.toFixed(4)} / 上限 $${env().X_DAILY_BUDGET_USD}`;
 
   await postMessage({
-    channel: env().SLACK_CHANNEL_ALERTS,
+    kind: "alert",
     text: `ヘルスチェック\n${summary}`,
     blocks: [
       { type: "section", text: { type: "mrkdwn", text: `*ヘルスチェック*\n${summary}` } },
