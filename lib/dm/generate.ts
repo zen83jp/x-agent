@@ -115,6 +115,8 @@ export function allowedUrls(meetingUrl: string, faqs: Pick<Faq, "answer">[]): st
 }
 
 const MEETING_LEAD = "▼日程調整";
+/** お礼／本題／面談の誘い。文がこれ以上あるのに本文の行数が足りなければ「改行が足りない」 */
+const MIN_BODY_LINES = 3;
 /** 言いさし（文が完結していない）とみなす文末 */
 const TRAILING_OFF = /(れば|たら|ので|けど|けれど)[。！!]?$/;
 
@@ -144,6 +146,11 @@ export function checkReplyText(text: string | null, allowed: string[], meetingUr
   if (text.includes(meetingUrl) && !lines.includes(meetingUrl)) issues.push("日程調整 URL が独立した行になっていません");
   if (text.includes(MEETING_LEAD) && !lines.some((l) => l.startsWith(MEETING_LEAD))) {
     issues.push("「▼日程調整…」の定型文が独立した行になっていません");
+  }
+  const body = lines.filter((l) => l && !isBoilerplateLine(l, meetingUrl));
+  const sentences = (body.join("").match(/[。！!？?]/g) ?? []).length;
+  if (body.length < Math.min(MIN_BODY_LINES, sentences)) {
+    issues.push("改行が足りません（お礼／本題／面談の誘いをそれぞれ別の行にしてください）");
   }
   const trailing = lines.filter((l) => !isBoilerplateLine(l, meetingUrl) && TRAILING_OFF.test(l));
   if (trailing.length) issues.push(`文が言いさしで終わっています: 「${trailing[0]}」`);

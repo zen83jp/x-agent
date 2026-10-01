@@ -1,5 +1,4 @@
 import type Anthropic from "@anthropic-ai/sdk";
-import type { KnownBlock } from "@slack/web-api";
 import { generateJson, loadPrompt } from "../claude";
 import { downloadSlackFile, fetchChannelMessage, postThreadReply, type SlackFile } from "../slack/client";
 import { db } from "../supabase";
@@ -96,8 +95,9 @@ export function buildSummary(args: {
 }
 
 /** 返信案だけを本文にしたメッセージ（装飾なし。長押し・選択でそのままコピーできるように） */
-function copyable(text: string): { text: string; blocks: KnownBlock[] } {
-  return { text, blocks: [{ type: "section", text: { type: "plain_text", text, emoji: false } }] };
+function copyable(text: string): { text: string; mrkdwn: false } {
+  // plain_text のブロックだと改行がスペースで表示されることがあるため、書式なしの本文として送る
+  return { text, mrkdwn: false };
 }
 
 /** ② 返信アシスタント: メンションされたメッセージから分類と返信案を作ってスレッドに返す */

@@ -154,6 +154,22 @@ describe("返信案の機械チェック", () => {
     expect(issues).toEqual(["文が言いさしで終わっています: 「詳しくは15分ほどお話しできれば。」"]);
   });
 
+  it("お礼と本題が1行につながっていたら「改行が足りない」を要確認にする（修正前の実例）", () => {
+    const joined = [
+      "ありがとうございます！月10時間あたり、12ヶ月25,000円（税抜）です。途中解約不可、プラン期間で自動更新です。詳しくは15分ほどお話しできればと思います。",
+      "▼日程調整サイトからご予約をお願いいたします。",
+      meeting,
+    ].join("\n");
+    expect(checkReplyText(joined, allowed, meeting)).toEqual([
+      "改行が足りません（お礼／本題／面談の誘いをそれぞれ別の行にしてください）",
+    ]);
+  });
+
+  it("文が少ない短い返信なら1〜2行でもよい", () => {
+    expect(checkReplyText("ご連絡ありがとうございます！", allowed, meeting)).toEqual([]);
+    expect(checkReplyText("ご連絡ありがとうございます。\n今回は見送らせていただきます。", allowed, meeting)).toEqual([]);
+  });
+
   it("null なら何もしない", () => expect(checkReplyText(null, allowed, meeting)).toEqual([]));
 });
 

@@ -52,12 +52,15 @@ export async function postThreadReply(args: {
   threadTs: string;
   text: string;
   blocks?: KnownBlock[];
+  /** false にすると *太字* などの書式を解釈せず、改行もそのまま表示する */
+  mrkdwn?: boolean;
 }): Promise<void> {
   const res = await slack().chat.postMessage({
     channel: args.channel,
     thread_ts: args.threadTs,
     text: args.text,
     blocks: args.blocks,
+    mrkdwn: args.mrkdwn,
   });
   if (!res.ok) throw new Error(`Slack thread reply failed: ${res.error ?? "unknown"}`);
 }
