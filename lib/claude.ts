@@ -25,7 +25,8 @@ export type JsonResult<T> = { ok: true; data: T } | { ok: false; error: string }
  */
 export async function generateJson<S extends z.ZodType>(args: {
   system: string;
-  user: string;
+  /** テキスト、または画像を含むコンテンツブロック */
+  user: string | Anthropic.ContentBlockParam[];
   schema: S;
   maxTokens?: number;
 }): Promise<JsonResult<z.infer<S>>> {

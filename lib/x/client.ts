@@ -1,6 +1,7 @@
 import { assertWithinBudget, recordUsage } from "./budget";
 import { getValidAccessToken } from "./oauth";
-import { X_OPS, actualUnits, containsUrl, estimateUnits, type XOp } from "./pricing";
+import { chargeNewResources } from "./billing";
+import { X_OPS, containsUrl, estimateCostUsd, type XOp, type XOpDef } from "./pricing";
 
 const API_BASE = "https://api.x.com";
 
@@ -59,10 +60,10 @@ function buildUrl(path: string, params: Record<string, string> = {}, query: Quer
  * X API を呼ぶ唯一の入口。予算チェック → 呼び出し → x_api_usage への記録を必ず通す。
  */
 export async function xApi<T>(op: XOp, opts: XApiOptions = {}): Promise<T> {
-  const def = X_OPS[op];
+  const def: XOpDef = X_OPS[op];
   assertNoUrlInPost(op, opts.body);
 
-  await assertWithinBudget(def.unitCostUsd * estimateUnits(def, opts.query));
+  await assertWithinBudget(estimateCostUsd(def, opts.query));
 
   const url = buildUrl(def.path, opts.params, opts.query);
   const endpoint = `${def.method} ${def.path}`;
@@ -83,8 +84,12 @@ export async function xApi<T>(op: XOp, opts: XApiOptions = {}): Promise<T> {
   }
 
   const json: unknown = await res.json().catch(() => null);
-  const units = res.ok ? actualUnits(def, json) : 0;
-  await recordUsage({ endpoint, units, estCostUsd: units * def.unitCostUsd, status: res.status });
+  const { units, costUsd } = !res.ok
+    ? { units: 0, costUsd: 0 }
+    : def.billing.kind === "request"
+      ? { units: 1, costUsd: def.billing.costUsd }
+      : await chargeNewResources(def.billing.extract(json));
+  await recordUsage({ endpoint, units, estCostUsd: costUsd, status: res.status });
 
   if (!res.ok) {
     const reset = res.headers.get("x-rate-limit-reset");

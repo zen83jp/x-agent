@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import { env } from "../env";
 import { db } from "../supabase";
-import { notifyAlert } from "../slack/client";
+import { notifyAlertOncePerDay } from "../alerts";
 import { recordUsage } from "./budget";
 
 const AUTHORIZE_URL = "https://x.com/i/oauth2/authorize";
@@ -120,7 +120,11 @@ export async function saveTokens(xUserId: string, t: TokenResponse): Promise<voi
  */
 export async function getValidAccessToken(opts: { force?: boolean } = {}): Promise<string> {
   const row = await readAuth();
-  if (!row) throw new XAuthError("X が未認可です。/api/x/authorize から認可してください");
+  if (!row) {
+    const err = new XAuthError("X が未認可です。/api/x/authorize から認可してください");
+    await notifyAlertOncePerDay("x_auth_missing", err.message);
+    throw err;
+  }
 
   const expiresAt = new Date(row.expires_at).getTime();
   if (!opts.force && expiresAt - Date.now() > REFRESH_MARGIN_MS) return row.access_token;
@@ -131,7 +135,8 @@ export async function getValidAccessToken(opts: { force?: boolean } = {}): Promi
   } catch (e) {
     const latest = await readAuth();
     if (latest && latest.refresh_token !== row.refresh_token) return latest.access_token;
-    await notifyAlert(
+    await notifyAlertOncePerDay(
+      "x_auth_refresh",
       `X のトークン更新に失敗しました。代表アカウントで再認可してください（/api/x/authorize）。\n${String(e)}`,
     );
     throw e;

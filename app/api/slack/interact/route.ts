@@ -1,15 +1,24 @@
 import type { KnownBlock } from "@slack/web-api";
 import { after, NextResponse } from "next/server";
 import { env } from "@/lib/env";
-import { actionHandlers, blockActionsPayload, type BlockActionsPayload } from "@/lib/slack/actions";
+import {
+  actionHandlers,
+  blockActionsPayload,
+  syncActionHandlers,
+  viewHandlers,
+  viewSubmissionPayload,
+  type BlockActionsPayload,
+  type ViewSubmissionPayload,
+} from "@/lib/slack/actions";
 import { notifyAlert, postThreadReply, updateMessage } from "@/lib/slack/client";
 import { verifySlackSignature } from "@/lib/slack/verify";
 
 export const dynamic = "force-dynamic";
+export const maxDuration = 60;
 
 /**
- * Slack のボタン操作を受ける。Slack は3秒以内の応答を求めるので、署名検証とパースだけ同期で行い、
- * 実処理は after() でレスポンス後に実行する。
+ * Slack のボタン操作・モーダル送信を受ける。Slack は3秒以内の応答を求めるので、署名検証とパースだけ同期で行い、
+ * 実処理は after() でレスポンス後に実行する（モーダルを開く操作だけは trigger_id の期限があるため同期）。
  */
 export async function POST(req: Request) {
   const rawBody = await req.text();
@@ -28,8 +37,12 @@ export async function POST(req: Request) {
   } catch {
     return new NextResponse("bad payload", { status: 400 });
   }
+
+  const view = viewSubmissionPayload.safeParse(raw);
+  if (view.success) return handleViewSubmission(view.data);
+
   const parsed = blockActionsPayload.safeParse(raw);
-  // block_actions 以外（モーダル送信など）は Phase 2 以降で対応。Slack にはエラーを返さない
+  // 未対応の種類は Slack にエラーを返さない
   if (!parsed.success) return new NextResponse(null, { status: 200 });
   // 通知チャンネル以外からの操作は受け付けない
   if (parsed.data.container.channel_id !== env().SLACK_CHANNEL_ID) {
@@ -37,19 +50,43 @@ export async function POST(req: Request) {
     return new NextResponse(null, { status: 200 });
   }
 
-  after(() => handle(parsed.data));
+  const actionId = parsed.data.actions[0]!.action_id;
+  if (syncActionHandlers[actionId]) {
+    await handle(parsed.data, syncActionHandlers[actionId]);
+    return new NextResponse(null, { status: 200 });
+  }
+  after(() => handle(parsed.data, actionHandlers[actionId]));
   return new NextResponse(null, { status: 200 });
 }
 
-async function handle(p: BlockActionsPayload): Promise<void> {
+function handleViewSubmission(p: ViewSubmissionPayload): Response {
+  const entry = viewHandlers[p.view.callback_id];
+  if (!entry) return new NextResponse(null, { status: 200 });
+  const text = p.view.state.values[entry.block]?.[entry.action]?.value?.trim() ?? "";
+  if (!text) {
+    // モーダルを閉じずに入力欄にエラーを表示する
+    return NextResponse.json({ response_action: "errors", errors: { [entry.block]: "文面を入力してください" } });
+  }
+  after(async () => {
+    try {
+      await entry.handler({ userId: p.user.id, privateMetadata: p.view.private_metadata, text });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error("view submission failed", p.view.callback_id, e);
+      await notifyAlert(`モーダルからの送信に失敗しました（要手動対応）: ${msg}`);
+    }
+  });
+  return new NextResponse(null, { status: 200 }); // 空の 200 でモーダルを閉じる
+}
+
+async function handle(p: BlockActionsPayload, handler: (typeof actionHandlers)[string] | undefined): Promise<void> {
   const action = p.actions[0]!;
   const channel = p.container.channel_id;
   const messageTs = p.container.message_ts;
-  const handler = actionHandlers[action.action_id];
 
   try {
     if (!handler) throw new Error(`未登録の action_id: ${action.action_id}`);
-    const result = await handler({ userId: p.user.id, value: action.value, channel, messageTs });
+    const result = await handler({ userId: p.user.id, value: action.value, channel, messageTs, triggerId: p.trigger_id });
     if (result.keepButtons) return;
 
     // ボタン（actions ブロック）を外し、誰がいつ何をしたかを残す（二重押下の防止）

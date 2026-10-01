@@ -29,7 +29,11 @@
 - X API呼び出しの共通ラッパー（使用量記録・予算チェック込み）
 
 ### Phase 2: DM（承認モード）
-- DM取得: webhook（Account Activity）が利用可能ならwebhook、不可なら Vercel Cron で5分おきにポーリング
+- **暗号化DMについて**: エンドツーエンド暗号化された会話は `GET /2/dm_events` に出てこない（取得できるのは旧形式のDMのみ）。扱うには X Chat API での復号が必要だが、代表の秘密鍵をサーバーに置く鍵管理のリスクから見送り。SDK（XDK）が正式版になったら再検討
+- そのため DM は2本立てにする
+  - ① 旧形式DM: 下記のとおり自動取得 → 分類・返信案 → Slack承認 → API で送信
+  - ② 暗号化DM: Slack の「返信アシスタント」（後述）。送信は代表が X アプリから手動で行う
+- DM取得: Vercel Cron で5分おきにポーリングで開始（webhook（X Activity API）は後日検討）
   - ポーリングは `max_results` を小さく絞り、取得済みの最新イベント（`settings` に保存したカーソル／`dm_messages.x_event_id`）以降だけを読む。全件の再取得はしない（従量課金対策）
 - 新着DMごとに `prompts/dm_classifier.md` で分類し、`prompts/dm_reply.md` で返信案を生成
 - Slackに「元メッセージ／分類／返信案」を投稿し、[送信][修正して送信][送らない][リード登録のみ] ボタンを付ける
@@ -37,7 +41,14 @@
 - `invitation` は `sales_pitch` と同じく [丁寧に断る][無視] ボタンで通知する（招待はすべて断る方針）
 - 代表がXアプリから手動で送ったDM（新規フォロワーへの挨拶など）も、DM取得時に `dm_messages`（direction = 'out'）へ取り込む。挨拶ループ防止の判定に使うため
 - `reply` が null で `greeting` のスレッドは通知せず close する（ログのみ）
-- 分類が `inquiry_detailed` 以上なら `leads` に自動登録
+- `spam` は通知せず close する（ログのみ）。`escalate` は返信案なしで通知し、[自分で書いて送信][送らない] ボタンを付ける
+- 分類が `inquiry_detailed` / `quote_contract` なら `leads` に自動登録（`escalate` はクレーム等のため対象外）
+- 初回のポーリングでは過去のDMを処理しない（最新イベントIDをカーソルとして記録するだけ）
+- X の課金は同じリソースを UTC 日内で1回だけ。`x_api_usage` にも重複を除いた額だけを記録する（`x_billed_resources`）
+- ② 返信アシスタント: `SLACK_CHANNEL_ID` で `@X Agent` にメンションして DM の本文テキストかスクショを送ると、`prompts/dm_screenshot_reader.md`（スクショのみ）→ `dm_classifier` → `dm_reply` で分類と返信案をスレッドに返す
+  - 返信案は装飾なしの独立したメッセージで返す（コピーして X アプリから送るため）
+  - 同じスレッドで「もっと短く」などと返信すると、それまでの指示をすべて反映して作り直す
+  - リード登録の対象は①と同じ。@ユーザー名が読み取れたら、それで既存リードと名寄せする（無ければ新規）。①で X のユーザー ID が分かったら同じリードに統合する
 
 ### Phase 3: 投稿パイプライン
 - 毎朝7:45 JST: `prompts/post_writer.md` で3〜5案生成 → `prompts/reviewer.md` で審査 → Slackへ

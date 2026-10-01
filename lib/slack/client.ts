@@ -47,8 +47,18 @@ export async function postMessage(args: {
 }
 
 /** 既存メッセージのスレッドに返信する（ラベルなし） */
-export async function postThreadReply(args: { channel: string; threadTs: string; text: string }): Promise<void> {
-  const res = await slack().chat.postMessage({ channel: args.channel, thread_ts: args.threadTs, text: args.text });
+export async function postThreadReply(args: {
+  channel: string;
+  threadTs: string;
+  text: string;
+  blocks?: KnownBlock[];
+}): Promise<void> {
+  const res = await slack().chat.postMessage({
+    channel: args.channel,
+    thread_ts: args.threadTs,
+    text: args.text,
+    blocks: args.blocks,
+  });
   if (!res.ok) throw new Error(`Slack thread reply failed: ${res.error ?? "unknown"}`);
 }
 
@@ -77,4 +87,33 @@ export async function notifyAlert(text: string, level: "error" | "info" = "error
   } catch (e) {
     console.error("notifyAlert failed", e, text);
   }
+}
+
+/** モーダルを開く。trigger_id はボタン押下から3秒で失効するので、押下を受けたリクエスト内で呼ぶこと */
+export async function openModal(triggerId: string, view: Record<string, unknown>): Promise<void> {
+  const res = await slack().views.open({ trigger_id: triggerId, view: view as never });
+  if (!res.ok) throw new Error(`Slack views.open failed: ${res.error ?? "unknown"}`);
+}
+
+/** Slack にアップロードされたファイル（url_private_download）を取得する。files:read スコープが必要 */
+export async function downloadSlackFile(url: string, maxBytes: number): Promise<Buffer> {
+  if (!url.startsWith("https://files.slack.com/")) throw new Error("Slack 以外の URL は取得しません");
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${env().SLACK_BOT_TOKEN}` } });
+  if (!res.ok) throw new Error(`Slack ファイルの取得に失敗: ${res.status}`);
+  const buf = Buffer.from(await res.arrayBuffer());
+  if (buf.length > maxBytes) throw new Error(`ファイルが大きすぎます（${buf.length} bytes）`);
+  return buf;
+}
+
+export type SlackFile = { mimetype?: string; url_private_download?: string; size?: number; name?: string };
+
+/** チャンネル直下のメッセージを1件取得する（添付ファイルの情報を確実に得るため）。history スコープが必要 */
+export async function fetchChannelMessage(
+  channel: string,
+  ts: string,
+): Promise<{ text?: string; files?: SlackFile[] } | null> {
+  const res = await slack().conversations.history({ channel, latest: ts, inclusive: true, limit: 1 });
+  if (!res.ok) throw new Error(`Slack conversations.history failed: ${res.error ?? "unknown"}`);
+  const m = res.messages?.[0];
+  return m && m.ts === ts ? { text: m.text, files: m.files as SlackFile[] | undefined } : null;
 }

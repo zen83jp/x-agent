@@ -1,4 +1,4 @@
-# Slack アプリのマニフェスト。api.slack.com/apps → Create New App → From a manifest に貼り付ける。
+# Slack アプリのマニフェスト。api.slack.com/apps → 対象アプリ → App Manifest に貼り付けて Save（変更後は再インストールが必要）。
 display_information:
   name: X Agent
   description: 代表Xアカウントの DM・投稿の承認
@@ -9,8 +9,18 @@ features:
 oauth_config:
   scopes:
     bot:
-      - chat:write
+      - chat:write          # 承認・通知の投稿
+      - app_mentions:read   # 返信アシスタント: メンションの受信
+      - files:read          # 返信アシスタント: スクショの取得
+      - groups:history      # 返信アシスタント: 非公開チャンネルのスレッド返信（作り直し指示）の受信
+      - channels:history    # 同上（公開チャンネルの場合）
 settings:
+  event_subscriptions:
+    request_url: https://x-agent-rust.vercel.app/api/slack/events
+    bot_events:
+      - app_mention
+      - message.groups
+      - message.channels
   interactivity:
     is_enabled: true
     request_url: https://x-agent-rust.vercel.app/api/slack/interact
