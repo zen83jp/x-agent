@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildSummary, contextFromScreenshot, imageFiles, pickReplyText, stripMentions } from "@/lib/dm/assist";
-import { allowedUrls, checkReplyText } from "@/lib/dm/generate";
+import { allowedUrls, checkReplyText, checkShortened, countBodyChars } from "@/lib/dm/generate";
 import { normalizeUsername } from "@/lib/dm/leads";
 import { isNewer, newestId, selectNewEvents, shouldReadNextPage } from "@/lib/dm/poll";
 import type { Classification, Reply } from "@/lib/dm/schemas";
@@ -116,21 +116,70 @@ describe("buildApprovalBlocks", () => {
 });
 
 describe("返信案の機械チェック", () => {
-  const allowed = allowedUrls("https://app.spirinc.com/t/abc", [{ answer: "応募は https://taskar.online/staff/ から" }]);
+  const meeting = "https://app.spirinc.com/t/abc";
+  const allowed = allowedUrls(meeting, [{ answer: "応募は https://taskar.online/staff/ から" }]);
+  const good = [
+    "山田さん、ご質問ありがとうございます！",
+    "料金は月10時間で25,000円（税抜・12ヶ月プラン）です。途中解約はできず、プラン期間で自動更新となります。",
+    "詳しくは15分ほどお話しできればと思います。",
+    "▼日程調整サイトからご予約をお願いいたします。",
+    meeting,
+  ].join("\n");
 
-  it("日程調整 URL と FAQ の URL は許可する", () => {
-    expect(checkReplyText("▼日程調整\nhttps://app.spirinc.com/t/abc", allowed)).toEqual([]);
-    expect(checkReplyText("こちら https://taskar.online/staff/", allowed)).toEqual([]);
+  it("お礼／本題／誘い／定型文／URL の形なら問題なし", () => {
+    expect(checkReplyText(good, allowed, meeting)).toEqual([]);
   });
 
-  it("それ以外の URL と200字超を要確認にする", () => {
-    const issues = checkReplyText("https://example.com " + "あ".repeat(200), allowed);
-    expect(issues).toHaveLength(2);
-    expect(issues.join()).toContain("example.com");
-    expect(issues.join()).toContain("200字を超えています");
+  it("字数は定型文と URL の行、改行を除いた本文だけで数える", () => {
+    expect(countBodyChars(good, meeting)).toBe([..."山田さん、ご質問ありがとうございます！料金は月10時間で25,000円（税抜・12ヶ月プラン）です。途中解約はできず、プラン期間で自動更新となります。詳しくは15分ほどお話しできればと思います。"].length);
+    // 本文199字＋定型文・URL は 200字以内として通る
+    const body = "あ".repeat(199) + "。";
+    expect(checkReplyText([body, "▼日程調整サイトからご予約をお願いいたします。", meeting].join("\n"), allowed, meeting)).toEqual([]);
+    expect(checkReplyText("あ".repeat(201), allowed, meeting).join()).toContain("200字を超えています（201字");
   });
 
-  it("null なら何もしない", () => expect(checkReplyText(null, allowed)).toEqual([]));
+  it("FAQ に載っている URL は許可し、それ以外は要確認にする", () => {
+    expect(checkReplyText("応募はこちらからお願いします。\nhttps://taskar.online/staff/", allowed, meeting)).toEqual([]);
+    expect(checkReplyText("詳しくはこちらをご覧ください。\nhttps://example.com", allowed, meeting).join()).toContain("example.com");
+  });
+
+  it("定型文や URL が本文と同じ行にあれば要確認にする", () => {
+    const issues = checkReplyText(`ぜひお話しできればと思います。▼日程調整サイトからご予約をお願いいたします。${meeting}`, allowed, meeting);
+    expect(issues.join()).toContain("日程調整 URL が独立した行になっていません");
+    expect(issues.join()).toContain("定型文が独立した行になっていません");
+  });
+
+  it("言いさしで終わる文を要確認にする", () => {
+    const issues = checkReplyText(["詳しくは15分ほどお話しできれば。", "▼日程調整サイトからご予約をお願いいたします。", meeting].join("\n"), allowed, meeting);
+    expect(issues).toEqual(["文が言いさしで終わっています: 「詳しくは15分ほどお話しできれば。」"]);
+  });
+
+  it("null なら何もしない", () => expect(checkReplyText(null, allowed, meeting)).toEqual([]));
+});
+
+describe("作り直しの短縮チェック", () => {
+  const meeting = "https://app.spirinc.com/t/abc";
+  const tail = ["▼日程調整サイトからご予約をお願いいたします。", meeting];
+  const before = ["ご連絡ありがとうございます！", "料金は（いずれも税抜）です。途中解約はできず、各プランの期間で自動更新となります。", ...tail].join("\n");
+  const shorter = ["ご連絡ありがとうございます！", "料金は（税抜・途中解約不可・期間ごとの自動更新）です。", ...tail].join("\n");
+
+  it("「もっと短く」で本文が短くなっていれば問題なし（定型文と URL は数えない）", () => {
+    expect(checkShortened({ previousReply: before, instructions: ["もっと短く"] }, shorter, meeting)).toEqual([]);
+  });
+
+  it("「もっと短く」で短くなっていなければ要確認にする", () => {
+    const issues = checkShortened({ previousReply: shorter, instructions: ["もっと短く"] }, before, meeting);
+    expect(issues).toHaveLength(1);
+    expect(issues[0]).toContain("短くなっていません");
+  });
+
+  it("同じ長さも要確認にする", () => {
+    expect(checkShortened({ previousReply: before, instructions: ["簡潔に"] }, before, meeting)).toHaveLength(1);
+  });
+
+  it("最新の指示が短縮でなければチェックしない", () => {
+    expect(checkShortened({ previousReply: shorter, instructions: ["もっと短く", "料金には触れないで"] }, before, meeting)).toEqual([]);
+  });
 });
 
 describe("normalizeUsername（名寄せキー）", () => {

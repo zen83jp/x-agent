@@ -3,7 +3,7 @@ import type { KnownBlock } from "@slack/web-api";
 import { generateJson, loadPrompt } from "../claude";
 import { downloadSlackFile, fetchChannelMessage, postThreadReply, type SlackFile } from "../slack/client";
 import { db } from "../supabase";
-import { NO_DRAFT_CATEGORIES, classifyDm, draftReply } from "./generate";
+import { NO_DRAFT_CATEGORIES, classifyDm, draftReply, replyTextFor } from "./generate";
 import { isLeadCategory, normalizeUsername, upsertLead } from "./leads";
 import { screenshotSchema, type Classification, type DmContext, type Reply, type Screenshot } from "./schemas";
 import { esc } from "./slack";
@@ -68,10 +68,7 @@ async function readScreenshots(files: ReturnType<typeof imageFiles>): Promise<Sc
 const isDecline = (c: Classification) => c.category === "sales_pitch" || c.category === "invitation";
 
 /** 返信案として表示する文面（営業・招待はお断り文） */
-export function pickReplyText(c: Classification, r: Reply | null): string | null {
-  if (!r) return null;
-  return isDecline(c) ? r.decline_reply : r.reply;
-}
+export const pickReplyText = replyTextFor;
 
 export function buildSummary(args: {
   ctx: DmContext;

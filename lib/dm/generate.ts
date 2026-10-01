@@ -57,11 +57,6 @@ async function loadReplyInputs(): Promise<{ styleGuide: string; faqs: Faq[] }> {
 
 export type Revision = { previousReply: string; instructions: string[] };
 
-const REVISION_RULE = `
-
-## 書き直し
-<revision_instructions> がある場合は、<previous_reply> を、そこに並んだ指示（古い順。すべて守る）に従って書き直す。
-指示と「絶対ルール」がぶつかる場合は絶対ルールを優先し、守れなかった点を needs_human_check に書く。`;
 
 export async function draftReply(
   ctx: DmContext,
@@ -83,30 +78,74 @@ export async function draftReply(
       `<revision_instructions>\n${revision.instructions.map((s, i) => `${i + 1}. ${s}`).join("\n")}\n</revision_instructions>`,
     );
   }
-  const system = (await loadPrompt("dm_reply")) + (revision ? REVISION_RULE : "");
+  // 作り直しのルールも dm_reply.md に書いてある（<revision_instructions> があるとき）
+  const system = await loadPrompt("dm_reply");
   const res = await generateJson({ system, user: parts.join("\n") + noteBlock(ctx), schema: replySchema, maxTokens: 4096 });
   if (!res.ok) return res;
-  const allowed = allowedUrls(env().MEETING_URL, faqs);
+  const meetingUrl = env().MEETING_URL;
+  const allowed = allowedUrls(meetingUrl, faqs);
   const checks = [
     ...res.data.needs_human_check,
-    ...checkReplyText(res.data.reply, allowed),
-    ...checkReplyText(res.data.decline_reply, allowed).map((c) => `お断り文: ${c}`),
+    ...checkReplyText(res.data.reply, allowed, meetingUrl),
+    ...checkReplyText(res.data.decline_reply, allowed, meetingUrl).map((c) => `お断り文: ${c}`),
+    ...(revision ? checkShortened(revision, replyTextFor(classification, res.data), meetingUrl) : []),
   ];
   return { ok: true, data: { ...res.data, needs_human_check: checks } };
+}
+
+/** 表示・送信する文面（営業・招待はお断り文、それ以外は返信案） */
+export function replyTextFor(c: Classification, r: Reply | null): string | null {
+  if (!r) return null;
+  return c.category === "sales_pitch" || c.category === "invitation" ? r.decline_reply : r.reply;
+}
+
+const SHORTEN_REQUEST = /短く|短縮|簡潔|コンパクト|削って|減らして|縮めて/;
+
+/** 短縮の指示（最新の指示）なのに、本文が前の案より短くなっていなければ要確認にする */
+export function checkShortened(revision: Revision, newText: string | null, meetingUrl: string): string[] {
+  const latest = revision.instructions.at(-1) ?? "";
+  if (!newText || !SHORTEN_REQUEST.test(latest)) return [];
+  const before = countBodyChars(revision.previousReply, meetingUrl);
+  const after = countBodyChars(newText, meetingUrl);
+  return after < before ? [] : [`短縮の指示でしたが、本文が前の案より短くなっていません（${before}字 → ${after}字）`];
 }
 
 export function allowedUrls(meetingUrl: string, faqs: Pick<Faq, "answer">[]): string[] {
   return [meetingUrl, ...faqs.flatMap((f) => f.answer.match(URL_IN_TEXT) ?? [])];
 }
 
+const MEETING_LEAD = "▼日程調整";
+/** 言いさし（文が完結していない）とみなす文末 */
+const TRAILING_OFF = /(れば|たら|ので|けど|けれど)[。！!]?$/;
+
+function isBoilerplateLine(line: string, meetingUrl: string): boolean {
+  const t = line.trim();
+  return t.startsWith(MEETING_LEAD) || t === meetingUrl;
+}
+
+/**
+ * 字数制限の対象になる本文の文字数。▼日程調整の定型文の行と日程調整 URL の行、改行は数えない
+ * （dm_reply.md の「本文は200字以内」と同じ数え方）。
+ */
+export function countBodyChars(text: string, meetingUrl: string): number {
+  return [...text.split("\n").filter((l) => !isBoilerplateLine(l, meetingUrl)).join("")].length;
+}
+
 /** 返信案の機械チェック。問題は「要確認」として表示するだけで、送信は止めない */
-export function checkReplyText(text: string | null, allowed: string[]): string[] {
+export function checkReplyText(text: string | null, allowed: string[], meetingUrl: string): string[] {
   if (!text) return [];
   const issues: string[] = [];
-  const length = [...text].length;
-  if (length > MAX_REPLY_CHARS) issues.push(`${MAX_REPLY_CHARS}字を超えています（${length}字）`);
+  const length = countBodyChars(text, meetingUrl);
+  if (length > MAX_REPLY_CHARS) issues.push(`本文が${MAX_REPLY_CHARS}字を超えています（${length}字。日程調整の定型文と URL を除く）`);
   for (const url of text.match(URL_IN_TEXT) ?? []) {
     if (!allowed.some((a) => url.startsWith(a))) issues.push(`許可されていない URL が含まれています: ${url}`);
   }
+  const lines = text.split("\n").map((l) => l.trim());
+  if (text.includes(meetingUrl) && !lines.includes(meetingUrl)) issues.push("日程調整 URL が独立した行になっていません");
+  if (text.includes(MEETING_LEAD) && !lines.some((l) => l.startsWith(MEETING_LEAD))) {
+    issues.push("「▼日程調整…」の定型文が独立した行になっていません");
+  }
+  const trailing = lines.filter((l) => !isBoilerplateLine(l, meetingUrl) && TRAILING_OFF.test(l));
+  if (trailing.length) issues.push(`文が言いさしで終わっています: 「${trailing[0]}」`);
   return issues;
 }
