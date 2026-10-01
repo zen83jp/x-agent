@@ -25,18 +25,23 @@ const schema = z.object({
 
 export type Env = z.infer<typeof schema>;
 
-let cached: Env | undefined;
+const cache: Partial<Env> = {};
+
+const proxy = new Proxy(cache, {
+  get(target, prop) {
+    if (typeof prop !== "string" || !(prop in schema.shape)) return undefined;
+    const key = prop as keyof Env;
+    if (key in target) return target[key];
+    const parsed = schema.shape[key].safeParse(process.env[key]);
+    if (!parsed.success) throw new Error(`環境変数が不足または不正です: ${key}`);
+    return ((target as Record<string, unknown>)[key] = parsed.data);
+  },
+}) as Env;
 
 /**
- * 環境変数を検証して返す。ビルド時に失敗しないよう、初回呼び出し時に検証する。
+ * 環境変数を返す。読まれた変数だけをその時点で検証する。
+ * ビルド時に失敗せず、設定済みのサービス（例: Slack だけ）から順に動作確認できるようにするため。
  */
 export function env(): Env {
-  if (cached) return cached;
-  const parsed = schema.safeParse(process.env);
-  if (!parsed.success) {
-    const missing = parsed.error.issues.map((i) => i.path.join(".")).join(", ");
-    throw new Error(`環境変数が不足または不正です: ${missing}`);
-  }
-  cached = parsed.data;
-  return cached;
+  return proxy;
 }
