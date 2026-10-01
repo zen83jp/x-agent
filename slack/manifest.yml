@@ -1,5 +1,4 @@
 # Slack アプリのマニフェスト。api.slack.com/apps → Create New App → From a manifest に貼り付ける。
-# <your-app> は Vercel のプロジェクトのドメインに置き換えること。
 display_information:
   name: X Agent
   description: 代表Xアカウントの DM・投稿の承認
@@ -14,7 +13,7 @@ oauth_config:
 settings:
   interactivity:
     is_enabled: true
-    request_url: https://<your-app>.vercel.app/api/slack/interact
+    request_url: https://x-agent-rust.vercel.app/api/slack/interact
   org_deploy_enabled: false
   socket_mode_enabled: false
   token_rotation_enabled: false
