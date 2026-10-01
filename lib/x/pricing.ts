@@ -69,6 +69,12 @@ export const X_OPS = {
     billing: { kind: "request", costUsd: 0.015 },
   },
   "tweets.create": { method: "POST", path: "/2/tweets", billing: { kind: "request", costUsd: 0.015 } },
+  // 代表アカウント自身のタイムライン（自分の投稿の読み取り＝Owned Reads）
+  "users.tweets.own": {
+    method: "GET",
+    path: "/2/users/:id/tweets",
+    billing: { kind: "resources", estimateUnitUsd: 0.001, extract: (j) => asResources("own_post", ids((j as Json)?.data)) },
+  },
   // 同じエンドポイントでも、誰の投稿を読むかで単価が違うため操作を分けている
   "tweets.lookup.own": {
     method: "GET",
