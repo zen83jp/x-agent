@@ -27,6 +27,7 @@ export type WriteContext = {
 export type Written = { body: string; reason: string; theme: string; review: ReviewNote };
 
 type Inputs = {
+  previousDay: string[];
   styleGuide: string;
   insights: string;
   recentPosts: string[];
@@ -35,8 +36,15 @@ type Inputs = {
   pool: { body: string; label: string }[];
 };
 
-async function loadInputs(excludeDraftId?: number): Promise<Inputs> {
-  const [style, insight, history, drafts] = await Promise.all([
+/** 前日の日付（YYYY-MM-DD） */
+export function previousDate(date: string): string {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
+async function loadInputs(date: string, excludeDraftId?: number): Promise<Inputs> {
+  const [style, insight, history, drafts, prevDay] = await Promise.all([
     db().from("style_guide").select("content").eq("approved", true).order("version", { ascending: false }).limit(1),
     db().from("insights").select("summary").order("created_at", { ascending: false }).limit(1),
     recentHistory(DUPLICATE_POOL),
@@ -48,11 +56,19 @@ async function loadInputs(excludeDraftId?: number): Promise<Inputs> {
       .neq("review_status", "expired")
       .order("id", { ascending: false })
       .limit(RECENT_DRAFTS + 1),
+    // 前日に投稿予定の案（承認待ち・承認済み・投稿済み）
+    db()
+      .from("post_drafts")
+      .select("id, body")
+      .eq("target_date", previousDate(date))
+      .in("review_status", ["awaiting_approval", "approved", "posting", "posted"]),
   ]);
+  if (prevDay.error) throw prevDay.error;
   if (drafts.error) throw drafts.error;
   const otherDrafts = (drafts.data ?? []).filter((d) => d.id !== excludeDraftId).slice(0, RECENT_DRAFTS);
   const real = history.filter((h) => !h.fabricated);
   return {
+    previousDay: (prevDay.data ?? []).filter((d) => d.id !== excludeDraftId).map((d) => d.body),
     styleGuide: style.data?.[0]?.content ?? "（未整備）",
     insights: insight.data?.[0]?.summary ?? "（まだなし）",
     recentPosts: real.slice(0, RECENT_POSTS).map((h) => h.body),
@@ -76,6 +92,7 @@ function commonParts(ctx: WriteContext, inputs: Inputs): string[] {
     `<recent_posts>\n${list(inputs.recentPosts)}\n</recent_posts>`,
     `<avoid_angles>\n${list(inputs.avoidAngles)}\n</avoid_angles>`,
     `<recent_drafts>\n${list(inputs.recentDrafts)}\n</recent_drafts>`,
+    `<previous_day_drafts>\n${list(inputs.previousDay)}\n</previous_day_drafts>`,
     `<batch_drafts>\n${list(ctx.batchBodies ?? [])}\n</batch_drafts>`,
   ];
 }
@@ -86,7 +103,7 @@ function commonParts(ctx: WriteContext, inputs: Inputs): string[] {
  */
 export async function writeAndReview(ctx: WriteContext): Promise<Written | { failed: string }> {
   if (ctx.kind === "personal" && !ctx.topic) return { failed: "personal にはネタが必要です" };
-  const inputs = await loadInputs(ctx.excludeDraftId);
+  const inputs = await loadInputs(ctx.day.date, ctx.excludeDraftId);
   const [writerPrompt, reviewerPrompt] = await Promise.all([loadPrompt("post_writer"), loadPrompt("reviewer")]);
   let lastReason = "";
 
@@ -111,7 +128,7 @@ export async function writeAndReview(ctx: WriteContext): Promise<Written | { fai
       continue;
     }
 
-    const pre = mechanicalCheck(w.data.body, inputs.pool);
+    const pre = mechanicalCheck(w.data.body, inputs.pool, inputs.previousDay);
     if (pre.fatal.length) {
       lastReason = pre.fatal.join("、");
       continue;
@@ -133,7 +150,7 @@ export async function writeAndReview(ctx: WriteContext): Promise<Written | { fai
     }
 
     const body = r.data.verdict === "fix" && r.data.fixed_body ? r.data.fixed_body : w.data.body;
-    const post = mechanicalCheck(body, inputs.pool);
+    const post = mechanicalCheck(body, inputs.pool, inputs.previousDay);
     if (post.fatal.length || post.errors.length) {
       lastReason = [...post.fatal, ...post.errors].join("、");
       continue;

@@ -60,3 +60,31 @@ export function findDuplicates<T extends { body: string }>(text: string, pool: T
     .filter((p) => p.score >= DUPLICATE_THRESHOLD)
     .sort((a, b) => b.score - a.score);
 }
+
+/** 挨拶の定型として、重なっても問題にしない言い回し（正規化後） */
+const COMMON_PHRASES = ["おはようございます", "今日も", "最高の1日にしましょう", "最高の一日にしましょう"];
+
+/**
+ * 2つの本文に共通する最長の言い回し（空白・記号を除いて比べる。定型の挨拶は除く）。
+ * 連続する日の投稿で、同じ特徴的なフレーズを使っていないかの検出用
+ */
+export function longestSharedPhrase(a: string, b: string): string {
+  const strip = (t: string) => COMMON_PHRASES.reduce((s, p) => s.split(p).join("|"), normalizeForSimilarity(t));
+  const x = strip(a);
+  const y = strip(b);
+  let best = "";
+  const prev = new Array<number>(y.length + 1).fill(0);
+  for (let i = 1; i <= x.length; i++) {
+    let diag = 0;
+    for (let j = 1; j <= y.length; j++) {
+      const up = prev[j]!;
+      prev[j] = x[i - 1] === y[j - 1] && x[i - 1] !== "|" ? diag + 1 : 0;
+      if (prev[j]! > best.length) best = x.slice(i - prev[j]!, i);
+      diag = up;
+    }
+  }
+  return best;
+}
+
+/** これ以上の長さの共通フレーズを「同じ言い回し」とみなす（例：「お休みの方もお仕事の方も」は12） */
+export const SHARED_PHRASE_MIN = 8;

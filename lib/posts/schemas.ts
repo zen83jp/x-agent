@@ -10,7 +10,7 @@ export const writerSchema = z.object({
 });
 export type WriterOutput = z.infer<typeof writerSchema>;
 
-export const ISSUE_TYPES = ["legal", "url", "style", "fact", "duplicate", "length", "other"] as const;
+export const ISSUE_TYPES = ["legal", "url", "style", "fact", "duplicate", "calendar", "length", "other"] as const;
 
 export const reviewSchema = z.object({
   verdict: z.enum(["pass", "fix", "reject"]),

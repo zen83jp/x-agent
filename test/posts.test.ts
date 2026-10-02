@@ -5,7 +5,8 @@ import { targetDatesFrom } from "@/lib/posts/calendar";
 import { suggestFabricated } from "@/lib/posts/history";
 import { dueCheckpoints } from "@/lib/posts/metrics";
 import { approvalDeadline, buildPostApprovalBlocks, formatJst, isPastDeadline, nextSlotTime, slotTimeForIndex } from "@/lib/posts/slack";
-import { similarity, weightedLength } from "@/lib/posts/text";
+import { longestSharedPhrase, similarity, weightedLength } from "@/lib/posts/text";
+import { previousDate } from "@/lib/posts/writer";
 import { isTopicListCommand, parseTopic } from "@/lib/posts/topics";
 
 describe("投稿案の構成", () => {
@@ -163,4 +164,26 @@ describe("作り話の候補", () => {
     "スタッフが来週オンラインで「AI好きの雑談会」を開くそうです。ランチを食べながら",
     "強いチームは、特別なことから生まれるわけじゃない。",
   ])("候補にしない: %s", (t) => expect(suggestFabricated(t)).toBeNull());
+});
+
+describe("連続する日の言い回し", () => {
+  const sat = "おはようございます！\n\n土曜日の朝。\nお休みの方も、お仕事の方も、まずは自分のペースで。\n\n今日も前向きにいきましょう✨";
+  const sun = "おはようございます！\n\n日曜日の朝。\nお休みの方も、お仕事の方も、心と体を整えて。\n\nまた明日からの一歩につなげましょう✨";
+
+  it("前日と同じ特徴的なフレーズを見つける", () => {
+    expect(longestSharedPhrase(sat, sun)).toContain("お休みの方もお仕事の方も");
+    expect(mechanicalCheck(sun, [], [sat]).warnings[0]).toContain("お休みの方もお仕事の方も");
+  });
+
+  it("「おはようございます」など定型の挨拶は重なってもよい", () => {
+    const a = "おはようございます！\n\n週のはじまり。\n一つずつ進めましょう。";
+    const b = "おはようございます！\n\n金曜日です。\n最後までやり切りましょう。";
+    expect(mechanicalCheck(b, [], [a]).warnings).toEqual([]);
+  });
+
+  it("前日の日付", () => {
+    expect(previousDate("2026-10-04")).toBe("2026-10-03");
+    expect(previousDate("2026-11-01")).toBe("2026-10-31");
+    expect(previousDate("2027-01-01")).toBe("2026-12-31");
+  });
 });

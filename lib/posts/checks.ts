@@ -1,5 +1,5 @@
 import { containsUrl } from "../x/pricing";
-import { X_MAX_WEIGHTED, findDuplicates, weightedLength } from "./text";
+import { SHARED_PHRASE_MIN, X_MAX_WEIGHTED, findDuplicates, longestSharedPhrase, weightedLength } from "./text";
 
 const TRAILING_OFF = /(れば|たら|ので|けど|けれど)[。！!]?$/;
 const SUPERLATIVE = /必ず|絶対|No\.?\s?1|ナンバーワン|業界初|最安|日本一|世界一/i;
@@ -18,7 +18,12 @@ export type MechanicalResult = {
 /**
  * 投稿案の機械チェック。LLM の審査の前後に必ず通す。
  */
-export function mechanicalCheck(body: string, pool: { body: string; label: string }[]): MechanicalResult {
+export function mechanicalCheck(
+  body: string,
+  pool: { body: string; label: string }[],
+  /** 前日に投稿予定の案（連続する日で同じ言い回しを使わないため） */
+  previousDay: string[] = [],
+): MechanicalResult {
   const fatal: string[] = [];
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -34,6 +39,9 @@ export function mechanicalCheck(body: string, pool: { body: string; label: strin
 
   const soft = body.match(SOFT_SUPERLATIVE);
   if (soft) warnings.push(`最上級に近い言い方があります（「${soft[0]}」）。意見として自然か確認してください`);
+
+  const shared = previousDay.map((p) => longestSharedPhrase(body, p)).sort((a, b) => b.length - a.length)[0] ?? "";
+  if (shared.length >= SHARED_PHRASE_MIN) warnings.push(`前日の案と同じ言い回しがあります（「${shared}」）`);
 
   const dup = findDuplicates(body, pool)[0];
   if (dup) warnings.push(`${dup.label}と似ています（類似度 ${dup.score.toFixed(2)}）: 「${dup.body.replace(/\s+/g, " ").slice(0, 30)}…」`);
