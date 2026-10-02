@@ -48,6 +48,7 @@
 - `reply` が null で `greeting` のスレッドは通知せず close する（ログのみ）
 - `spam` は通知せず close する（ログのみ）。`escalate` は返信案なしで通知し、[自分で書いて送信][送らない] ボタンを付ける
 - 分類が `inquiry_detailed` / `quote_contract` なら `leads` に自動登録（`escalate` はクレーム等のため対象外）
+  - タスカルに発信（架電・テレアポ・営業電話・アウトバウンド）を頼みたい問い合わせは、具体性に関わらず `inquiry_detailed`（リード登録）。架電サービスを売り込む DM は `sales_pitch`、着信だけの質問は `faq`（`prompts/dm_classifier.md`）
 - 初回のポーリングでは過去のDMを処理しない（最新イベントIDをカーソルとして記録するだけ）
 - X の課金は同じリソースを UTC 日内で1回だけ。`x_api_usage` にも重複を除いた額だけを記録する（`x_billed_resources`）
 - ② 返信アシスタント: `SLACK_CHANNEL_ID` で `@X Agent` にメンションして DM の本文テキストかスクショを送ると、`prompts/dm_screenshot_reader.md`（スクショのみ）→ `dm_classifier` → `dm_reply` で分類と返信案をスレッドに返す
