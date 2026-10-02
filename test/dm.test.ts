@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildSummary, contextFromScreenshot, imageFiles, pickReplyText, stripMentions } from "@/lib/dm/assist";
+import { buildSummary, contextFromScreenshot, imageFiles, pickReplyText, stripMentions, stripSlackFooter } from "@/lib/dm/assist";
 import { allowedUrls, checkReplyText, checkShortened, countBodyChars } from "@/lib/dm/generate";
 import { normalizeUsername } from "@/lib/dm/leads";
 import { isNewer, newestId, selectNewEvents, shouldReadNextPage } from "@/lib/dm/poll";
@@ -204,6 +204,21 @@ describe("返信案の機械チェック", () => {
     expect(checkReplyText(t, allowed, meeting)).toContain("日程調整 URL が最終行になっていません");
   });
 
+  it("面談の誘いが本題と同じ行なら要確認（電話対応の返信案の実例）", () => {
+    const t = [
+      "ご連絡ありがとうございます！",
+      "電話（着信）対応とオフライン（出社・訪問など）の対応は、行っていません。",
+      "メール対応や日程調整などの事務・秘書業務であればご相談いただけます。詳しくはオンラインでお話しできればと思います。",
+      "▼日程調整サイトからご予約をお願いいたします。",
+      meeting,
+    ].join("\n");
+    expect(checkReplyText(t, allowed, meeting)).toContain(
+      "面談の誘い（「詳しくは」など）が本題と同じ行にあります。面談の誘いは独立した1行にしてください",
+    );
+    const fixed = t.replace("ご相談いただけます。詳しくは", "ご相談いただけます。\n詳しくは");
+    expect(checkReplyText(fixed, allowed, meeting)).toEqual([]);
+  });
+
   it("null なら何もしない", () => expect(checkReplyText(null, allowed, meeting)).toEqual([]));
 });
 
@@ -242,6 +257,13 @@ describe("返信アシスタント", () => {
     expect(stripMentions("<@U0ABC123> 料金はいくらですか？")).toBe("料金はいくらですか？");
     expect(stripMentions("<@U0ABC123|x-agent>  もっと短く ")).toBe("もっと短く");
     expect(stripMentions(undefined)).toBe("");
+  });
+
+  it("アプリ経由の定型の文言（*使用して送信されました*）を取り除く", () => {
+    expect(stripMentions("<@U0ABC123> 電話対応もお願いできますか？ *使用して送信されました* <@U0ABC999>")).toBe("電話対応もお願いできますか？");
+    expect(stripMentions("<@U0ABC123> 料金は？\n*Claude を使用して送信されました* <@U0ABC999>")).toBe("料金は？");
+    expect(stripSlackFooter("「いちばん」を使わない表現にして *使用して送信されました*")).toBe("「いちばん」を使わない表現にして");
+    expect(stripMentions("もっと短く")).toBe("もっと短く");
   });
 
   it("画像ファイルだけを対象にする", () => {

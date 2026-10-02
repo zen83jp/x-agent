@@ -17,8 +17,24 @@ const USAGE =
   "使い方: `@X Agent` に続けて DM の本文を貼るか、DM 画面のスクショを添付してください。返信案ができたら、このスレッドで「もっと短く」などと返信すると作り直します。";
 
 /** メンション（<@U…>）を取り除いた本文 */
+/**
+ * Claude の Slack コネクタなどアプリ経由で送ったメッセージに付く定型の文言（「*Claude を使用して送信されました* <@…>」など）。
+ * DM 本文や指示として読まないよう取り除く
+ */
+const SLACK_APP_FOOTER = /\*[^*\n]{0,40}使用して送信されました\*/g;
+
+export function stripSlackFooter(text: string): string {
+  return text
+    .replace(SLACK_APP_FOOTER, "")
+    .split("\n")
+    .map((l) => l.trimEnd())
+    .join("\n")
+    .trim();
+}
+
+/** メンション（<@U…>）とアプリ経由の定型の文言を取り除いた本文 */
 export function stripMentions(text: string | undefined): string {
-  return (text ?? "").replace(/<@[A-Z0-9]+(\|[^>]*)?>/g, "").trim();
+  return stripSlackFooter((text ?? "").replace(/<@[A-Z0-9]+(\|[^>]*)?>/g, ""));
 }
 
 export function imageFiles(files: SlackFile[] | undefined): (SlackFile & { mimetype: ImageType; url_private_download: string })[] {
@@ -227,7 +243,8 @@ export async function reviseAssist(assist: AssistRow, messageTs: string, rawText
     const previous = c ? pickReplyText(c, (earlier.at(-1)?.reply as Reply | undefined) ?? assist.reply) : null;
     if (!ctx || !c || !previous) return void (await say("作り直せる返信案がありません。"));
 
-    const instructions = (history ?? []).filter((h) => h.id <= rev.id).map((h) => h.instruction);
+    // 過去に保存した指示にアプリ経由の定型の文言が残っていても読み飛ばす
+    const instructions = (history ?? []).filter((h) => h.id <= rev.id).map((h) => stripSlackFooter(h.instruction));
     const drafted = await draftReply(ctx, c, { previousReply: previous, instructions });
     if (!drafted.ok) return void (await say(`:warning: 作り直しに失敗しました（${drafted.error}）`));
     const text = pickReplyText(c, drafted.data);

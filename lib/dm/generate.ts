@@ -148,6 +148,8 @@ export function allowedUrls(meetingUrl: string, faqs: Pick<Faq, "answer">[]): st
 }
 
 const MEETING_LEAD = "▼日程調整";
+/** 面談の誘いの書き出し */
+const INVITE = /詳しくは|お話しできれば/;
 /** お礼／本題／面談の誘い。文がこれ以上あるのに本文の行数が足りなければ「改行が足りない」 */
 const MIN_BODY_LINES = 3;
 /** 言いさし（文が完結していない）とみなす文末 */
@@ -189,6 +191,12 @@ export function checkReplyText(text: string | null, allowed: string[], meetingUr
   if (trailing.length) issues.push(`文が言いさしで終わっています: 「${trailing[0]}」`);
   // 行の並び（1行目＝お礼〔＋自己紹介〕／本題／面談の誘い／定型文／URL）
   const nonEmpty = lines.filter(Boolean);
+  // 面談の誘いは独立した1行に（誘いの前に、同じ行の中で別の文が終わっていたら本題と同じ行）
+  const inviteLine = nonEmpty.find((l) => {
+    const at = l.search(INVITE);
+    return at > 0 && /[。！？!?]/.test(l.slice(0, at));
+  });
+  if (inviteLine) issues.push("面談の誘い（「詳しくは」など）が本題と同じ行にあります。面談の誘いは独立した1行にしてください");
   if (nonEmpty.length > 1 && /円|割引|料金|時間|対応|開始/.test(nonEmpty[0]!)) {
     issues.push("1行目（お礼の行）に本題が入っています。本題は2行目から書いてください");
   }

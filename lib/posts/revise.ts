@@ -1,4 +1,4 @@
-import { stripMentions } from "../dm/assist";
+import { stripMentions, stripSlackFooter } from "../dm/assist";
 import { esc } from "../dm/slack";
 import { postThreadReply } from "../slack/client";
 import { db } from "../supabase";
@@ -41,7 +41,8 @@ export async function reviseDraft(draft: DraftRow, messageTs: string, rawText: s
       .lte("id", rev.id)
       .order("id");
     if (hErr) throw hErr;
-    const instructions = (history ?? []).map((h) => h.instruction);
+    // 過去に保存した指示にアプリ経由の定型の文言が残っていても読み飛ばす
+    const instructions = (history ?? []).map((h) => stripSlackFooter(h.instruction));
     const topic = Array.isArray(draft.post_topics) ? draft.post_topics[0] : draft.post_topics;
     const { data: siblings } = await db()
       .from("post_drafts")
