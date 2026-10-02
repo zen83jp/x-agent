@@ -87,3 +87,24 @@ describe("要修正の印", () => {
     expect(isBlocked(null)).toBe(false);
   });
 });
+
+describe("時間単価と10時間単位", () => {
+  const tail = "（いずれも税抜・途中解約不可・期間ごとの自動更新）です。";
+  it("時間単価だけで「10時間」がなければ差し戻す（確認用の返信案の実例）", () => {
+    const t = `1時間あたりは、12ヶ月プラン2,500円／6ヶ月プラン3,000円／3ヶ月プラン4,000円${tail}`;
+    expect(blockingIssues(t, allowed)).toEqual([
+      "時間単価（「1時間あたり」）を書くときは「月10時間から（10時間単位）のご契約」であることを添えてください",
+    ]);
+  });
+  it("「月10時間から（10時間単位）」があれば通す", () => {
+    const t = `ご契約は月10時間から（10時間単位）です。1時間あたりにすると、12ヶ月プランで2,500円${tail}`;
+    expect(blockingIssues(t, allowed)).toEqual([]);
+  });
+  it("時間単価・時給の言い方も対象", () => {
+    expect(blockingIssues(`時給換算で2,500円${tail}`, allowed).join()).toContain("「時給」");
+    expect(blockingIssues(`時間単価は2,500円${tail}`, allowed).join()).toContain("「時間単価」");
+  });
+  it("金額のない「1時間あたり」は対象外", () => {
+    expect(blockingIssues("1時間あたりの作業量は業務によって変わります。", allowed)).toEqual([]);
+  });
+});

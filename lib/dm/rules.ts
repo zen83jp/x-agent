@@ -25,6 +25,10 @@ const SENTENCE_END = /[。！？!?\n]/;
 const MID_CANCEL = /途中解約(?:不可|はでき(?:ず|ません)|できません)/;
 const AUTO_RENEW = /自動更新/;
 const USUAL_FIVE_DAYS = /通常(?:は)?\s*[5５]\s*営業日/;
+/** 時間単価の表現（金額と一緒に出てきたときだけ見る） */
+const HOURLY = /[1１一]\s*時間(?:あたり|当たり|につき)|時間単価|時給/;
+/** 「月10時間から（10時間単位）」の契約であることの表記 */
+const TEN_HOURS = /(?:10|１０|十)\s*時間/;
 const URL_IN_TEXT = /https?:\/\/[^\s<>「」（）()]+/g;
 
 /** text の index を含む1文（「。」「！」「？」や改行で区切る。括弧の中も含む） */
@@ -61,6 +65,11 @@ export function blockingIssues(text: string | null, allowed: string[]): string[]
   if (prices.length) {
     if (!MID_CANCEL.test(text)) issues.push("料金に触れているのに「途中解約不可」がありません");
     if (!AUTO_RENEW.test(text)) issues.push("料金に触れているのに「自動更新」がありません");
+    // 1時間単位で契約できると読めないように、時間単価には「月10時間から（10時間単位）」を添える
+    const hourly = text.match(HOURLY);
+    if (hourly && !TEN_HOURS.test(text)) {
+      issues.push(`時間単価（「${hourly[0]}」）を書くときは「月10時間から（10時間単位）のご契約」であることを添えてください`);
+    }
   }
 
   if (text.includes("最短翌営業日") && !USUAL_FIVE_DAYS.test(text)) {
