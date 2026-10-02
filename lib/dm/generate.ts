@@ -187,6 +187,15 @@ export function checkReplyText(text: string | null, allowed: string[], meetingUr
   }
   const trailing = lines.filter((l) => !isBoilerplateLine(l, meetingUrl) && TRAILING_OFF.test(l));
   if (trailing.length) issues.push(`文が言いさしで終わっています: 「${trailing[0]}」`);
+  // 行の並び（1行目＝お礼〔＋自己紹介〕／本題／面談の誘い／定型文／URL）
+  const nonEmpty = lines.filter(Boolean);
+  if (nonEmpty.length > 1 && /円|割引|料金|時間|対応|開始/.test(nonEmpty[0]!)) {
+    issues.push("1行目（お礼の行）に本題が入っています。本題は2行目から書いてください");
+  }
+  if (text.includes(meetingUrl)) {
+    if (nonEmpty.at(-1) !== meetingUrl) issues.push("日程調整 URL が最終行になっていません");
+    if (!nonEmpty.at(-2)?.startsWith(MEETING_LEAD)) issues.push("「▼日程調整…」の定型文が URL の直前の行になっていません");
+  }
   const nested = text.match(/（[^（）]*（[^（）]*）/);
   if (nested) issues.push(`括弧の中に括弧があります（「${nested[0]}…」）。要素は「／」で区切ってください`);
   return issues;

@@ -167,9 +167,9 @@ describe("返信案の機械チェック", () => {
       "▼日程調整サイトからご予約をお願いいたします。",
       meeting,
     ].join("\n");
-    expect(checkReplyText(joined, allowed, meeting)).toEqual([
-      "改行が足りません（お礼／本題／面談の誘いをそれぞれ別の行にしてください）",
-    ]);
+    const issues = checkReplyText(joined, allowed, meeting);
+    expect(issues).toContain("改行が足りません（お礼／本題／面談の誘いをそれぞれ別の行にしてください）");
+    expect(issues).toContain("1行目（お礼の行）に本題が入っています。本題は2行目から書いてください");
   });
 
   it("文が少ない短い返信なら1〜2行でもよい", () => {
@@ -181,6 +181,27 @@ describe("返信案の機械チェック", () => {
     const nested = checkReplyText("12ヶ月プラン2,500円です（税抜・月10時間から（10時間単位）のご契約）。", allowed, meeting);
     expect(nested.join()).toContain("括弧の中に括弧があります");
     expect(checkReplyText("12ヶ月プラン2,500円です（税抜／月10時間から・10時間単位のご契約）。", allowed, meeting)).toEqual([]);
+  });
+
+  it("行の並び: お礼と本題が同じ行なら要確認", () => {
+    const t = ["ご連絡ありがとうございます！割引は行っていません。", "契約期間が長いプランほど月額が下がる料金体系です。", "詳しくはオンラインでお話しできればと思います。", "▼日程調整サイトからご予約をお願いいたします。", meeting].join("\n");
+    expect(checkReplyText(t, allowed, meeting)).toContain("1行目（お礼の行）に本題が入っています。本題は2行目から書いてください");
+  });
+
+  it("行の並び: 初回の形（お礼＋自己紹介／本題／誘い／定型文／URL）は問題なし", () => {
+    const t = [
+      "ご連絡ありがとうございます！オンラインアシスタント『タスカル』をやっている角前です。",
+      "割引は行っていません。",
+      "詳しくはオンラインでお話しできればと思います。",
+      "▼日程調整サイトからご予約をお願いいたします。",
+      meeting,
+    ].join("\n");
+    expect(checkReplyText(t, allowed, meeting)).toEqual([]);
+  });
+
+  it("行の並び: URL の後ろに文があれば要確認", () => {
+    const t = ["ご連絡ありがとうございます！", "割引は行っていません。", "▼日程調整サイトからご予約をお願いいたします。", meeting, "今後ともよろしくお願いいたします。"].join("\n");
+    expect(checkReplyText(t, allowed, meeting)).toContain("日程調整 URL が最終行になっていません");
   });
 
   it("null なら何もしない", () => expect(checkReplyText(null, allowed, meeting)).toEqual([]));
