@@ -45,7 +45,7 @@ export type ActionContext = {
  * 処理結果。`summary` は元メッセージのボタンを置き換えて表示される。
  * `keepButtons: true` のときはボタンを残す（例: [修正して送信] でモーダルを開くだけの場合）。
  */
-export type ActionResult = { summary: string; keepButtons?: boolean };
+export type ActionResult = { summary: string; keepButtons?: boolean; /** 表示の先頭（既定は ✅） */ icon?: string };
 
 export type ActionHandler = (ctx: ActionContext) => Promise<ActionResult>;
 

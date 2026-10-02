@@ -9,6 +9,7 @@ export type DraftRow = {
   id: number;
   kind: PostKind;
   slot_time: Slot | null;
+  target_date: string | null;
   body: string;
   reason: string | null;
   review_note: ReviewNote | null;
@@ -22,7 +23,7 @@ export type DraftRow = {
 };
 
 export const DRAFT_SELECT =
-  "id, kind, slot_time, body, reason, review_note, review_status, topic_id, day_context, scheduled_at, slack_channel, slack_ts, post_topics!post_drafts_topic_id_fkey(body)";
+  "id, kind, slot_time, target_date, body, reason, review_note, review_status, topic_id, day_context, scheduled_at, slack_channel, slack_ts, post_topics!post_drafts_topic_id_fkey(body)";
 
 export async function loadDraft(id: number): Promise<DraftRow> {
   const { data, error } = await db().from("post_drafts").select(DRAFT_SELECT).eq("id", id).single();
@@ -36,6 +37,7 @@ export function viewOf(d: DraftRow, done?: string | null): PostApprovalView {
     draftId: d.id,
     kind: d.kind,
     slotTime: d.slot_time,
+    targetDate: d.target_date,
     dayLabel: d.day_context ? describeDay(d.day_context) : "",
     reason: d.reason,
     body: d.body,

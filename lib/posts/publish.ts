@@ -3,11 +3,10 @@ import { db } from "../supabase";
 import { xApi } from "../x/client";
 import { refreshDraftApproval } from "./approval";
 import { addPipelinePost } from "./history";
-import { formatJst } from "./slack";
+import { formatJst, isPastDeadline } from "./slack";
+import { jstDateOf } from "./calendar";
 import { markTopicUsed, releaseTopic } from "./topics";
 
-/** 承認されないまま、この時間がたった案は期限切れにする */
-export const EXPIRE_AFTER_MS = 48 * 60 * 60 * 1000;
 /** 予定時刻からこれ以上遅れたら投稿しない（Cron の停止などで、ずれた時刻に投稿しないため） */
 export const MAX_DELAY_MS = 2 * 60 * 60 * 1000;
 
@@ -81,20 +80,35 @@ async function publishOne(
   return true;
 }
 
-/** 承認されないまま48時間たった案を期限切れにし、ボタンを消す。personal ならネタをストックに戻す */
+/**
+ * 承認締切（投稿日の 7:30 JST）を過ぎても承認されていない案を、その日の全枠（12:10・20:30 も含む）期限切れにする。
+ * Slack の表示を「期限切れ」にしてボタンを消し、personal ならネタをストックに戻す。
+ */
 export async function expireStale(now = new Date()): Promise<number> {
-  const { data, error } = await db()
+  const { data: candidates, error } = await db()
     .from("post_drafts")
-    .update({ review_status: "expired" })
+    .select("id, target_date")
     .eq("review_status", "awaiting_approval")
-    .lt("created_at", new Date(now.getTime() - EXPIRE_AFTER_MS).toISOString())
-    .select("id, topic_id");
+    .lte("target_date", jstDateOf(now));
   if (error) throw error;
-  for (const d of data ?? []) {
+
+  let count = 0;
+  for (const c of candidates ?? []) {
+    if (!c.target_date || !isPastDeadline(c.target_date, now)) continue;
+    const { data, error: upErr } = await db()
+      .from("post_drafts")
+      .update({ review_status: "expired" })
+      .eq("id", c.id)
+      .eq("review_status", "awaiting_approval")
+      .select("id, topic_id");
+    if (upErr) throw upErr;
+    const d = data?.[0];
+    if (!d) continue;
+    count++;
     await releaseTopic(d.topic_id);
-    await refreshDraftApproval(d.id, `:hourglass: 期限切れ（48時間承認されませんでした）${d.topic_id ? "。ネタはストックに戻しました" : ""}`).catch(
+    await refreshDraftApproval(d.id, `:hourglass: 期限切れのため投稿されません（承認締切 7:30 を過ぎました）${d.topic_id ? "。ネタはストックに戻しました" : ""}`).catch(
       (e) => console.error("expire: Slack の更新に失敗", d.id, e),
     );
   }
-  return data?.length ?? 0;
+  return count;
 }

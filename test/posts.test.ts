@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { mechanicalCheck } from "@/lib/posts/checks";
-import { DEFAULT_SLOTS, nextJstDate, parseSlots } from "@/lib/posts/daily";
+import { DEFAULT_SLOTS, parseSlots } from "@/lib/posts/daily";
+import { targetDatesFrom } from "@/lib/posts/calendar";
 import { suggestFabricated } from "@/lib/posts/history";
 import { dueCheckpoints } from "@/lib/posts/metrics";
-import { buildPostApprovalBlocks, formatJst, nextSlotTime, slotTimeForIndex } from "@/lib/posts/slack";
+import { approvalDeadline, buildPostApprovalBlocks, formatJst, isPastDeadline, nextSlotTime, slotTimeForIndex } from "@/lib/posts/slack";
 import { similarity, weightedLength } from "@/lib/posts/text";
 import { isTopicListCommand, parseTopic } from "@/lib/posts/topics";
 
@@ -17,8 +18,20 @@ describe("投稿案の構成", () => {
     expect(parseSlots([["unknown"]])).toEqual(DEFAULT_SLOTS);
     expect(parseSlots("x")).toEqual(DEFAULT_SLOTS);
   });
-  it("21:00 JST の実行は翌日分", () => {
-    expect(nextJstDate(new Date("2026-10-02T12:00:00Z"))).toBe("2026-10-03");
+  it("月〜木は翌日分だけ", () => {
+    expect(targetDatesFrom("2026-10-05")).toEqual(["2026-10-06"]); // 月 → 火
+    expect(targetDatesFrom("2026-10-08")).toEqual(["2026-10-09"]); // 木 → 金
+  });
+  it("金曜は土・日・月分", () => {
+    expect(targetDatesFrom("2026-10-02")).toEqual(["2026-10-03", "2026-10-04", "2026-10-05"]);
+  });
+  it("連休前の平日は、連休中と休み明けの平日まで", () => {
+    // 10/10（土）〜10/12（月・スポーツの日）の3連休 → 10/13（火）まで
+    expect(targetDatesFrom("2026-10-09")).toEqual(["2026-10-10", "2026-10-11", "2026-10-12", "2026-10-13"]);
+    // 年末年始（12/29〜1/3）→ 1/4（月）まで
+    expect(targetDatesFrom("2026-12-28")).toEqual([
+      "2026-12-29", "2026-12-30", "2026-12-31", "2027-01-01", "2027-01-02", "2027-01-03", "2027-01-04",
+    ]);
   });
 });
 
@@ -26,14 +39,27 @@ describe("投稿時刻", () => {
   it("前日21時に承認すれば翌日のその時刻", () => {
     const at = nextSlotTime("07:30", new Date("2026-10-02T12:00:00Z")); // 10/2 21:00 JST
     expect(at.toISOString()).toBe("2026-10-02T22:30:00.000Z"); // 10/3 7:30 JST
-    expect(formatJst(at)).toBe("10/3（土）07:30");
+    expect(formatJst(at)).toBe("10/3（土）7:30");
   });
   it("当日、その時刻を過ぎてから承認すれば翌日", () => {
     const at = nextSlotTime("07:30", new Date("2026-10-03T00:00:00Z")); // 10/3 9:00 JST
-    expect(formatJst(at)).toBe("10/4（日）07:30");
+    expect(formatJst(at)).toBe("10/4（日）7:30");
   });
   it("当日、まだ来ていない時刻ならその日", () => {
     expect(formatJst(nextSlotTime("20:30", new Date("2026-10-03T00:00:00Z")))).toBe("10/3（土）20:30");
+  });
+});
+
+describe("承認締切（投稿日の 7:30）", () => {
+  it("締切の時刻", () => {
+    expect(approvalDeadline("2026-10-04").toISOString()).toBe("2026-10-03T22:30:00.000Z");
+    expect(formatJst(approvalDeadline("2026-10-04"))).toBe("10/4（日）7:30");
+  });
+  it("7:29 は締切前、7:30 からは締切後", () => {
+    expect(isPastDeadline("2026-10-04", new Date("2026-10-03T22:29:59Z"))).toBe(false);
+    expect(isPastDeadline("2026-10-04", new Date("2026-10-03T22:30:00Z"))).toBe(true);
+    // 12:10・20:30 の枠も、7:30 を過ぎたら締切後
+    expect(isPastDeadline("2026-10-04", new Date("2026-10-04T02:00:00Z"))).toBe(true);
   });
 });
 
@@ -91,7 +117,7 @@ describe("ネタの入力", () => {
 });
 
 describe("【投稿承認】のボタン", () => {
-  const view = { draftId: 9, dayLabel: "10/03（土）", reason: "狙い", body: "本文", topic: null, review: null };
+  const view = { draftId: 9, dayLabel: "10/04（日）", targetDate: "2026-10-04", reason: "狙い", body: "本文", topic: null, review: null };
   const actions = (kind: "greeting" | "business" | "personal", slotTime: "07:30" | "12:10" | "20:30" | null) =>
     (buildPostApprovalBlocks({ ...view, kind, slotTime }).blocks.find((b) => b.type === "actions") as { elements: { action_id: string }[] }).elements.map(
       (e) => e.action_id,
@@ -106,6 +132,9 @@ describe("【投稿承認】のボタン", () => {
   it("既定時刻のない古い案は種類で決める", () => {
     expect(actions("greeting", null)[0]).toBe("post_approve_0730");
     expect(actions("personal", null)[0]).toBe("post_approve_2030");
+  });
+  it("承認締切を表示する", () => {
+    expect(JSON.stringify(buildPostApprovalBlocks({ ...view, kind: "greeting", slotTime: "07:30" }).blocks)).toContain("承認締切：10/4（日）7:30");
   });
   it("処理済み・期限切れならボタンを消す", () => {
     const { blocks } = buildPostApprovalBlocks({ ...view, kind: "greeting", slotTime: "07:30", done: "期限切れ" });

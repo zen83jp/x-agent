@@ -34,6 +34,17 @@ export function slotTimeOn(date: string, slot: Slot): Date {
   return new Date(Date.UTC(y, mo - 1, d, h, m) - JST_OFFSET_MS);
 }
 
+/** 承認の締切: 投稿日の 7:30 JST。これを過ぎたら、その日の未承認の案はすべて期限切れ */
+export const APPROVAL_DEADLINE: Slot = "07:30";
+
+export function approvalDeadline(targetDate: string): Date {
+  return slotTimeOn(targetDate, APPROVAL_DEADLINE);
+}
+
+export function isPastDeadline(targetDate: string, now: Date): boolean {
+  return now.getTime() >= approvalDeadline(targetDate).getTime();
+}
+
 /** その時刻（JST）の次の発生時刻。今より後で最も近いもの（target_date がない古い案だけで使う） */
 export function nextSlotTime(slot: Slot, now: Date): Date {
   const [h, m] = slot.split(":").map(Number) as [number, number];
@@ -46,7 +57,7 @@ export function nextSlotTime(slot: Slot, now: Date): Date {
 export function formatJst(d: Date): string {
   const jst = new Date(d.getTime() + JST_OFFSET_MS);
   const wd = ["日", "月", "火", "水", "木", "金", "土"][jst.getUTCDay()];
-  return `${jst.getUTCMonth() + 1}/${jst.getUTCDate()}（${wd}）${String(jst.getUTCHours()).padStart(2, "0")}:${String(jst.getUTCMinutes()).padStart(2, "0")}`;
+  return `${jst.getUTCMonth() + 1}/${jst.getUTCDate()}（${wd}）${jst.getUTCHours()}:${String(jst.getUTCMinutes()).padStart(2, "0")}`;
 }
 
 export type PostApprovalView = {
@@ -54,6 +65,8 @@ export type PostApprovalView = {
   kind: PostKind;
   /** 枠の既定時刻（承認ボタンの先頭） */
   slotTime: Slot | null;
+  /** 投稿日（承認締切の表示に使う） */
+  targetDate: string | null;
   dayLabel: string;
   reason: string | null;
   body: string;
@@ -73,7 +86,12 @@ export function buildPostApprovalBlocks(v: PostApprovalView): { text: string; bl
   const blocks: KnownBlock[] = [
     {
       type: "context",
-      elements: [{ type: "mrkdwn", text: `*${KIND_LABEL[v.kind]}* ｜ ${esc(v.dayLabel)} 向け` }],
+      elements: [
+        {
+          type: "mrkdwn",
+          text: `*${KIND_LABEL[v.kind]}* ｜ ${esc(v.dayLabel)} 向け${v.targetDate ? ` ｜ 承認締切：${formatJst(approvalDeadline(v.targetDate))}` : ""}`,
+        },
+      ],
     },
   ];
   if (v.reason) blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: `狙い: ${esc(v.reason)}` }] });

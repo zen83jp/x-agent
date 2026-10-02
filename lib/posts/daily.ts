@@ -1,6 +1,6 @@
 import { notifyAlert } from "../slack/client";
 import { db, getSetting } from "../supabase";
-import { dayContext, jstDateOf } from "./calendar";
+import { dayContext, isDayOff, jstDateOf, targetDatesFrom } from "./calendar";
 import { postDraftApproval } from "./approval";
 import { POST_KINDS, type PostKind } from "./schemas";
 import { slotTimeForIndex } from "./slack";
@@ -17,18 +17,54 @@ export function parseSlots(value: unknown): PostKind[][] {
   return slots.every((s) => s.length > 0) ? slots : DEFAULT_SLOTS;
 }
 
-/** 翌日（JST）の日付 */
-export function nextJstDate(now: Date): string {
-  return jstDateOf(new Date(now.getTime() + 24 * 60 * 60 * 1000));
+/**
+ * 期限切れの案を1件、材料として確保する（同じ種類。personal は同じネタのものを優先）。
+ * reused_at を条件付きで埋めるので、同じ案を二度材料にしない。
+ */
+async function takeExpiredMaterial(kind: PostKind, topicId: number | null): Promise<{ body: string; reason: string | null } | null> {
+  let q = db()
+    .from("post_drafts")
+    .select("id, body, reason")
+    .eq("review_status", "expired")
+    .eq("kind", kind)
+    .is("reused_at", null)
+    .order("id", { ascending: false })
+    .limit(1);
+  if (kind === "personal" && topicId) q = q.eq("topic_id", topicId);
+  const { data, error } = await q;
+  if (error) throw error;
+  const m = data?.[0];
+  if (!m) return null;
+  const { data: claimed } = await db()
+    .from("post_drafts")
+    .update({ reused_at: new Date().toISOString() })
+    .eq("id", m.id)
+    .is("reused_at", null)
+    .select("id");
+  return claimed?.length ? { body: m.body, reason: m.reason } : null;
+}
+
+export type ScheduledResult = { today: string; skipped?: string; results: DailyResult[] };
+
+/**
+ * 平日 9:00 JST の作成。対象は翌日から次の平日までの各日（月〜木 → 翌日／金 → 土・日・月／連休前 → 休み明けまで）。
+ * 土日・祝日は何もしない。日付ごとに作成済みならその日は何もしない（再実行・手動実行で二重に作らない）。
+ */
+export async function createScheduledDrafts(now = new Date()): Promise<ScheduledResult> {
+  const today = jstDateOf(now);
+  if (isDayOff(today)) return { today, skipped: "土日・祝日のため作成しません", results: [] };
+  const results: DailyResult[] = [];
+  for (const date of targetDatesFrom(today)) results.push(await createDailyDrafts(now, date));
+  return { today, results };
 }
 
 export type DailyResult = { targetDate: string; created: { id: number; kind: PostKind }[]; failed: string[]; skipped?: string };
 
 /**
- * 翌日分の投稿案を作り、審査を通ったものを【投稿承認】に出す（毎日 21:00 JST）。
- * 同じ日付の案がすでにあれば何もしない（Cron の再実行で二重に作らない）。
+ * 指定した投稿日の投稿案を作り、審査を通ったものを【投稿承認】に出す。
+ * 同じ日付の案がすでにあれば何もしない（Cron の再実行・手動実行で二重に作らない）。
  */
-export async function createDailyDrafts(now = new Date(), targetDate = nextJstDate(now)): Promise<DailyResult> {
+export async function createDailyDrafts(now: Date, targetDate: string): Promise<DailyResult> {
   const { count, error } = await db()
     .from("post_drafts")
     .select("id", { count: "exact", head: true })
@@ -59,7 +95,8 @@ export async function createDailyDrafts(now = new Date(), targetDate = nextJstDa
     }
     if (!kind) continue;
 
-    const written = await writeAndReview({ kind, day, topic: topic?.body, batchBodies });
+    const material = await takeExpiredMaterial(kind, topic?.id ?? null);
+    const written = await writeAndReview({ kind, day, topic: topic?.body, batchBodies, material });
     if ("failed" in written) {
       await releaseTopic(topic?.id);
       failed.push(`${kind}: ${written.failed}`);

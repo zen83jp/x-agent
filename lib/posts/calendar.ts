@@ -74,6 +74,19 @@ export function hasHolidayData(date: string): boolean {
   return Object.keys(HOLIDAYS).some((d) => d.startsWith(date.slice(0, 4)));
 }
 
+/**
+ * 作成日（平日）から見た対象日: 翌日から「次の平日」までの各日。
+ * 例: 月〜木 → 翌日／金 → 土・日・月／連休前の平日 → 連休中と休み明けの平日まで
+ */
+export function targetDatesFrom(today: string): string[] {
+  const dates: string[] = [];
+  for (let d = addDays(today, 1); dates.length < 20; d = addDays(d, 1)) {
+    dates.push(d);
+    if (!isDayOff(d)) break;
+  }
+  return dates;
+}
+
 /** JST の日付文字列（YYYY-MM-DD） */
 export function jstDateOf(now: Date): string {
   return new Date(now.getTime() + JST_OFFSET_MS).toISOString().slice(0, 10);

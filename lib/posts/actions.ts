@@ -1,7 +1,7 @@
 import type { ActionContext, ActionHandler, ActionResult } from "../slack/actions";
 import { db } from "../supabase";
 import { refreshDraftApproval } from "./approval";
-import { SLOTS, formatJst, nextSlotTime, slotTimeOn, type Slot } from "./slack";
+import { SLOTS, formatJst, isPastDeadline, nextSlotTime, slotTimeOn, type Slot } from "./slack";
 import { releaseTopic } from "./topics";
 
 function parseId(value: string | undefined): number {
@@ -12,16 +12,10 @@ function parseId(value: string | undefined): number {
 
 const ALREADY_DONE: ActionResult = { summary: "処理済みのため何もしませんでした" };
 
-export class SlotPassedError extends Error {
-  constructor(at: Date) {
-    super(`${formatJst(at)} はすでに過ぎているため承認できません。別の時刻を選ぶか、却下してください`);
-    this.name = "SlotPassedError";
-  }
-}
-
 /**
  * 承認: 承認待ちの案だけを、**投稿案の target_date の**選んだ時刻で予約する（条件付き更新で二重承認しない）。
- * その時刻がすでに過ぎていたら承認せずエラーにする（Slack のスレッドに「要手動対応」として出る）。
+ * 承認締切（投稿日の 7:30）を過ぎていたら受け付けず、期限切れにする。7:30 は最も早い枠なので、
+ * 締切前なら選んだ時刻が過ぎていることはない。
  * 投稿するのは review_status = 'approved' の案だけ（CLAUDE.md の絶対ルール）。
  */
 export async function approveDraft(id: number, slot: Slot, now = new Date()): Promise<ActionResult> {
@@ -32,8 +26,19 @@ export async function approveDraft(id: number, slot: Slot, now = new Date()): Pr
     .single();
   if (readErr) throw readErr;
   if (draft.review_status !== "awaiting_approval") return ALREADY_DONE;
+  // 承認締切（投稿日の 7:30）を過ぎていたら受け付けない。Cron より先に押された場合もここで期限切れにする
+  if (draft.target_date && isPastDeadline(draft.target_date, now)) {
+    const { data: expired, error: expErr } = await db()
+      .from("post_drafts")
+      .update({ review_status: "expired" })
+      .eq("id", id)
+      .eq("review_status", "awaiting_approval")
+      .select("topic_id");
+    if (expErr) throw expErr;
+    if (expired?.length) await releaseTopic(expired[0]!.topic_id);
+    return { summary: "期限切れのため投稿されません", icon: ":hourglass:" };
+  }
   const at = draft.target_date ? slotTimeOn(draft.target_date, slot) : nextSlotTime(slot, now);
-  if (at.getTime() <= now.getTime()) throw new SlotPassedError(at);
 
   const { data, error } = await db()
     .from("post_drafts")
@@ -66,7 +71,7 @@ function withRefresh(run: (id: number) => Promise<ActionResult>): ActionHandler 
     const result = await run(id);
     if (result === ALREADY_DONE) return result;
     const when = new Date().toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" });
-    await refreshDraftApproval(id, `:white_check_mark: ${result.summary}（<@${ctx.userId}> / ${when}）`);
+    await refreshDraftApproval(id, `${result.icon ?? ":white_check_mark:"} ${result.summary}（<@${ctx.userId}> / ${when}）`);
     return { ...result, keepButtons: true };
   };
 }

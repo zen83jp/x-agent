@@ -47,8 +47,6 @@ function query(table: string) {
       if (single && !update) return resolve({ data: { target_date: state.target_date, review_status: state.status }, error: null });
       if (update) {
         if (required && required !== state.status) return resolve({ data: [], error: null });
-        // 期限切れ処理（awaiting_approval → expired）はこのテストでは対象外
-        if (update.review_status === "expired") return resolve({ data: [], error: null });
         state.status = String(update.review_status);
         if (typeof update.scheduled_at === "string") state.scheduled_at = update.scheduled_at;
         return resolve({ data: [{ id: 1, topic_id: state.topic_id }], error: null });
@@ -73,7 +71,7 @@ vi.mock("@/lib/posts/history", () => ({ addPipelinePost: vi.fn(async () => {}) }
 vi.mock("@/lib/posts/topics", () => ({ releaseTopic: vi.fn(async () => {}), markTopicUsed: vi.fn(async () => {}) }));
 vi.mock("@/lib/slack/client", () => ({ notifyAlert: vi.fn(async () => {}) }));
 
-const { SlotPassedError, approveDraft, rejectDraft } = await import("@/lib/posts/actions");
+const { approveDraft, rejectDraft } = await import("@/lib/posts/actions");
 const { runPublish } = await import("@/lib/posts/publish");
 
 describe("承認と投稿", () => {
@@ -97,14 +95,25 @@ describe("承認と投稿", () => {
     expect(state.scheduled_at).toBe("2026-10-03T11:30:00.000Z");
   });
 
-  it("target_date のその時刻が過ぎていたら承認せずエラー（承認待ちのまま）", async () => {
-    // 10/3（土）13:00 JST に 12:10 で承認しようとした
-    await expect(approveDraft(1, "12:10", new Date("2026-10-03T04:00:00Z"))).rejects.toThrow(SlotPassedError);
-    expect(state.status).toBe("awaiting_approval");
-    expect(state.scheduled_at).toBeNull();
-    // 同じ日でもまだ来ていない 20:30 なら承認できる
-    await approveDraft(1, "20:30", new Date("2026-10-03T04:00:00Z"));
+  it("投稿日の 7:30 より前なら、その日のどの枠でも承認できる", async () => {
+    // 10/3（土）7:00 JST に 20:30 で承認
+    await approveDraft(1, "20:30", new Date("2026-10-02T22:00:00Z"));
+    expect(state.status).toBe("approved");
     expect(state.scheduled_at).toBe("2026-10-03T11:30:00.000Z");
+  });
+
+  it("承認締切（投稿日の 7:30）を過ぎた承認は受け付けず、期限切れにする（12:10・20:30 の枠も）", async () => {
+    // 10/3（土）8:00 JST に 20:30 で承認しようとした
+    const r = await approveDraft(1, "20:30", new Date("2026-10-02T23:00:00Z"));
+    expect(r.summary).toBe("期限切れのため投稿されません");
+    expect(state.status).toBe("expired");
+    expect(state.scheduled_at).toBeNull();
+  });
+
+  it("target_date のない古い案は、次に来るその時刻で予約する", async () => {
+    state.target_date = null;
+    await approveDraft(1, "07:30", new Date("2026-10-03T00:00:00Z")); // 10/3 9:00 JST
+    expect(state.scheduled_at).toBe("2026-10-03T22:30:00.000Z"); // 10/4 7:30 JST
   });
 
   it("二重押下でも承認は1回だけ", async () => {

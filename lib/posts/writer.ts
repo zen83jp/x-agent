@@ -20,6 +20,8 @@ export type WriteContext = {
   excludeDraftId?: number;
   /** 同じ日の他の投稿案（締めの言い回しを変えるため） */
   batchBodies?: string[];
+  /** 承認されずに期限切れになった案（参考。使い回さない） */
+  material?: { body: string; reason: string | null } | null;
 };
 
 export type Written = { body: string; reason: string; theme: string; review: ReviewNote };
@@ -42,6 +44,8 @@ async function loadInputs(excludeDraftId?: number): Promise<Inputs> {
       .from("post_drafts")
       .select("id, body")
       .not("kind", "is", null)
+      // 期限切れの案は投稿されていないので、重複の判定には使わない（材料として別に渡す）
+      .neq("review_status", "expired")
       .order("id", { ascending: false })
       .limit(RECENT_DRAFTS + 1),
   ]);
@@ -90,6 +94,9 @@ export async function writeAndReview(ctx: WriteContext): Promise<Written | { fai
     const writerUser = [
       ...commonParts(ctx, inputs),
       `<insights>\n${inputs.insights}\n</insights>`,
+      ...(ctx.material
+        ? [`<expired_material>\n${ctx.material.body}${ctx.material.reason ? `\n（狙い: ${ctx.material.reason}）` : ""}\n</expired_material>`]
+        : []),
       ...(ctx.revision
         ? [
             `<previous_body>\n${ctx.revision.previousBody}\n</previous_body>`,
