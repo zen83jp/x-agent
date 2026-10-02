@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildSummary, contextFromScreenshot, imageFiles, pickReplyText, stripMentions, stripSlackFooter } from "@/lib/dm/assist";
-import { allowedUrls, checkReplyText, checkShortened, countBodyChars } from "@/lib/dm/generate";
+import { MEETING_NOTE, allowedUrls, appendMeetingNote, checkReplyText, checkShortened, countBodyChars } from "@/lib/dm/generate";
 import { normalizeUsername } from "@/lib/dm/leads";
 import { isNewer, newestId, selectNewEvents, shouldReadNextPage } from "@/lib/dm/poll";
 import type { Classification, Reply } from "@/lib/dm/schemas";
@@ -132,9 +132,10 @@ describe("返信案の機械チェック", () => {
     "詳しくは15分ほどお話しできればと思います。",
     "▼日程調整サイトからご予約をお願いいたします。",
     meeting,
+    MEETING_NOTE,
   ].join("\n");
 
-  it("お礼／本題／誘い／定型文／URL の形なら問題なし", () => {
+  it("お礼／本題／誘い／定型文／URL／★の一文 の形なら問題なし", () => {
     expect(checkReplyText(good, allowed, meeting)).toEqual([]);
   });
 
@@ -142,7 +143,7 @@ describe("返信案の機械チェック", () => {
     expect(countBodyChars(good, meeting)).toBe([..."山田さん、ご質問ありがとうございます！料金は月10時間で25,000円（税抜・12ヶ月プラン）です。途中解約はできず、プラン期間で自動更新となります。詳しくは15分ほどお話しできればと思います。"].length);
     // 本文199字＋定型文・URL は 200字以内として通る
     const body = "あ".repeat(199) + "。";
-    expect(checkReplyText([body, "▼日程調整サイトからご予約をお願いいたします。", meeting].join("\n"), allowed, meeting)).toEqual([]);
+    expect(checkReplyText([body, "▼日程調整サイトからご予約をお願いいたします。", meeting, MEETING_NOTE].join("\n"), allowed, meeting)).toEqual([]);
     expect(checkReplyText("あ".repeat(201), allowed, meeting).join()).toContain("200字を超えています（201字");
   });
 
@@ -157,7 +158,7 @@ describe("返信案の機械チェック", () => {
   });
 
   it("言いさしで終わる文を要確認にする", () => {
-    const issues = checkReplyText(["詳しくは15分ほどお話しできれば。", "▼日程調整サイトからご予約をお願いいたします。", meeting].join("\n"), allowed, meeting);
+    const issues = checkReplyText(["詳しくは15分ほどお話しできれば。", "▼日程調整サイトからご予約をお願いいたします。", meeting, MEETING_NOTE].join("\n"), allowed, meeting);
     expect(issues).toEqual(["文が言いさしで終わっています: 「詳しくは15分ほどお話しできれば。」"]);
   });
 
@@ -195,13 +196,18 @@ describe("返信案の機械チェック", () => {
       "詳しくはオンラインでお話しできればと思います。",
       "▼日程調整サイトからご予約をお願いいたします。",
       meeting,
+      MEETING_NOTE,
     ].join("\n");
     expect(checkReplyText(t, allowed, meeting)).toEqual([]);
   });
 
-  it("行の並び: URL の後ろに文があれば要確認", () => {
+  it("行の並び: 最終行が★の一文でなければ要確認（URL の後ろに別の文がある）", () => {
     const t = ["ご連絡ありがとうございます！", "割引は行っていません。", "▼日程調整サイトからご予約をお願いいたします。", meeting, "今後ともよろしくお願いいたします。"].join("\n");
-    expect(checkReplyText(t, allowed, meeting)).toContain("日程調整 URL が最終行になっていません");
+    const issues = checkReplyText(t, allowed, meeting);
+    expect(issues).toContain("最終行が「★予約ページの…【角前Xより】…」の一文になっていません");
+    // ★の一文の後ろに URL がある（並びが逆）なら、URL の位置も要確認
+    const swapped = ["ご連絡ありがとうございます！", "割引は行っていません。", "▼日程調整サイトからご予約をお願いいたします。", MEETING_NOTE, meeting].join("\n");
+    expect(checkReplyText(swapped, allowed, meeting)).toContain("日程調整 URL が★の一文の直前の行になっていません");
   });
 
   it("面談の誘いが本題と同じ行なら要確認（電話対応の返信案の実例）", () => {
@@ -211,6 +217,7 @@ describe("返信案の機械チェック", () => {
       "メール対応や日程調整などの事務・秘書業務であればご相談いただけます。詳しくはオンラインでお話しできればと思います。",
       "▼日程調整サイトからご予約をお願いいたします。",
       meeting,
+      MEETING_NOTE,
     ].join("\n");
     expect(checkReplyText(t, allowed, meeting)).toContain(
       "面談の誘い（「詳しくは」など）が本題と同じ行にあります。面談の誘いは独立した1行にしてください",
@@ -220,6 +227,39 @@ describe("返信案の機械チェック", () => {
   });
 
   it("null なら何もしない", () => expect(checkReplyText(null, allowed, meeting)).toEqual([]));
+});
+
+describe("日程調整 URL の下の★の一文", () => {
+  const meeting = "https://app.spirinc.com/t/abc";
+  const base = ["ご連絡ありがとうございます！", "割引は行っていません。", "詳しくはオンラインでお話しできればと思います。", "▼日程調整サイトからご予約をお願いいたします。", meeting].join("\n");
+
+  it("URL の次の行に一字一句そのまま付ける", () => {
+    const out = appendMeetingNote(base, meeting)!;
+    expect(out.split("\n").slice(-2)).toEqual([meeting, MEETING_NOTE]);
+    expect(MEETING_NOTE).toBe("★予約ページの「ご用件・コメント」欄に【角前Xより】と記載いただけますと、ご案内がスムーズですので、ご協力よろしくお願いいたします。");
+  });
+
+  it("モデルが同じ一文（や言い回しの違う一文）を書いていても二重にしない", () => {
+    expect(appendMeetingNote(`${base}\n${MEETING_NOTE}`, meeting)!.split(MEETING_NOTE).length - 1).toBe(1);
+    const variant = `${base}\n★コメント欄に【角前Xより】とご記入ください。`;
+    const out = appendMeetingNote(variant, meeting)!;
+    expect(out).not.toContain("ご記入ください");
+    expect(out.endsWith(MEETING_NOTE)).toBe(true);
+  });
+
+  it("2回通しても1つだけ", () => {
+    expect(appendMeetingNote(appendMeetingNote(base, meeting), meeting)).toBe(appendMeetingNote(base, meeting));
+  });
+
+  it("日程調整 URL を含まない文面（お断り文など）には付けない", () => {
+    const decline = "ご連絡ありがとうございます。今回は見送らせていただきます。";
+    expect(appendMeetingNote(decline, meeting)).toBe(decline);
+    expect(appendMeetingNote(null, meeting)).toBeNull();
+  });
+
+  it("本文200字の数え方から★の一文を除く", () => {
+    expect(countBodyChars(appendMeetingNote(base, meeting)!, meeting)).toBe(countBodyChars(base, meeting));
+  });
 });
 
 describe("作り直しの短縮チェック", () => {

@@ -91,7 +91,13 @@ export async function draftReply(
     ...blockingIssues(r.decline_reply, allowed).map((c) => `お断り文: ${c}`),
   ];
 
-  let res = await generate([]);
+  // 日程調整 URL の次の行に★の一文を付け足す（モデルが書いていても二重にしない）
+  const withNote = (r: Reply): Reply => ({
+    ...r,
+    reply: appendMeetingNote(r.reply, meetingUrl),
+    decline_reply: appendMeetingNote(r.decline_reply, meetingUrl),
+  });
+  let res = await generate([]).then((g) => (g.ok ? { ...g, data: withNote(g.data) } : g));
   if (!res.ok) return res;
   let blocking = blockingOf(res.data);
   // 差し戻し: 理由を添えて1回だけ作り直す。それでも残れば「要修正」として［送信］を出さない
@@ -101,8 +107,8 @@ export async function draftReply(
       `<rejection_reasons>\n${blocking.map((b) => `- ${b}`).join("\n")}\n</rejection_reasons>`,
     ]);
     if (retry.ok) {
-      res = retry;
-      blocking = blockingOf(retry.data);
+      res = { ...retry, data: withNote(retry.data) };
+      blocking = blockingOf(res.data);
     }
   }
 
@@ -148,6 +154,28 @@ export function allowedUrls(meetingUrl: string, faqs: Pick<Faq, "answer">[]): st
 }
 
 const MEETING_LEAD = "▼日程調整";
+/**
+ * 日程調整 URL の次の行に付ける一文（一字一句このまま）。モデルには書かせず、コードで付け足す。
+ * 予約ページのコメント欄で、X からの予約だと分かるようにするため
+ */
+export const MEETING_NOTE =
+  "★予約ページの「ご用件・コメント」欄に【角前Xより】と記載いただけますと、ご案内がスムーズですので、ご協力よろしくお願いいたします。";
+/** モデルが同じ（または似た）一文を書いてきた場合に取り除くための目印 */
+const MEETING_NOTE_MARK = "【角前Xより】";
+
+/**
+ * 日程調整 URL を含む文面にだけ、URL の次の行へ MEETING_NOTE を付ける。
+ * すでに同じ一文（【角前Xより】を含む行）があれば取り除いてから付けるので、二重にならない。
+ * URL を含まない文面（お断り文など）はそのまま返す
+ */
+export function appendMeetingNote(text: string | null, meetingUrl: string): string | null {
+  if (!text || !text.includes(meetingUrl)) return text;
+  const lines = text.split("\n").filter((l) => !l.includes(MEETING_NOTE_MARK));
+  const urlIndex = lines.findIndex((l) => l.trim() === meetingUrl);
+  if (urlIndex < 0) return [...lines, MEETING_NOTE].join("\n");
+  lines.splice(urlIndex + 1, 0, MEETING_NOTE);
+  return lines.join("\n");
+}
 /** 面談の誘いの書き出し */
 const INVITE = /詳しくは|お話しできれば/;
 /** お礼／本題／面談の誘い。文がこれ以上あるのに本文の行数が足りなければ「改行が足りない」 */
@@ -155,9 +183,10 @@ const MIN_BODY_LINES = 3;
 /** 言いさし（文が完結していない）とみなす文末 */
 const TRAILING_OFF = /(れば|たら|ので|けど|けれど)[。！!]?$/;
 
+/** 定型の行（▼日程調整の定型文・日程調整 URL・★の一文）。字数・改行・言いさし・絵文字などのチェックの対象外 */
 function isBoilerplateLine(line: string, meetingUrl: string): boolean {
   const t = line.trim();
-  return t.startsWith(MEETING_LEAD) || t === meetingUrl;
+  return t.startsWith(MEETING_LEAD) || t === meetingUrl || t === MEETING_NOTE;
 }
 
 /**
@@ -176,7 +205,7 @@ export function checkReplyText(text: string | null, allowed: string[], meetingUr
   if (!text) return [];
   const issues: string[] = [];
   const length = countBodyChars(text, meetingUrl);
-  if (length > MAX_REPLY_CHARS) issues.push(`本文が${MAX_REPLY_CHARS}字を超えています（${length}字。日程調整の定型文と URL を除く）`);
+  if (length > MAX_REPLY_CHARS) issues.push(`本文が${MAX_REPLY_CHARS}字を超えています（${length}字。日程調整の定型文・URL・★の一文を除く）`);
   const lines = text.split("\n").map((l) => l.trim());
   if (text.includes(meetingUrl) && !lines.includes(meetingUrl)) issues.push("日程調整 URL が独立した行になっていません");
   if (text.includes(MEETING_LEAD) && !lines.some((l) => l.startsWith(MEETING_LEAD))) {
@@ -189,7 +218,7 @@ export function checkReplyText(text: string | null, allowed: string[], meetingUr
   }
   const trailing = lines.filter((l) => !isBoilerplateLine(l, meetingUrl) && TRAILING_OFF.test(l));
   if (trailing.length) issues.push(`文が言いさしで終わっています: 「${trailing[0]}」`);
-  // 行の並び（1行目＝お礼〔＋自己紹介〕／本題／面談の誘い／定型文／URL）
+  // 行の並び（1行目＝お礼〔＋自己紹介〕／本題／面談の誘い／定型文／URL／★の一文）
   const nonEmpty = lines.filter(Boolean);
   // 面談の誘いは独立した1行に（誘いの前に、同じ行の中で別の文が終わっていたら本題と同じ行）
   const inviteLine = nonEmpty.find((l) => {
@@ -201,8 +230,9 @@ export function checkReplyText(text: string | null, allowed: string[], meetingUr
     issues.push("1行目（お礼の行）に本題が入っています。本題は2行目から書いてください");
   }
   if (text.includes(meetingUrl)) {
-    if (nonEmpty.at(-1) !== meetingUrl) issues.push("日程調整 URL が最終行になっていません");
-    if (!nonEmpty.at(-2)?.startsWith(MEETING_LEAD)) issues.push("「▼日程調整…」の定型文が URL の直前の行になっていません");
+    if (nonEmpty.at(-1) !== MEETING_NOTE) issues.push("最終行が「★予約ページの…【角前Xより】…」の一文になっていません");
+    if (nonEmpty.at(-2) !== meetingUrl) issues.push("日程調整 URL が★の一文の直前の行になっていません");
+    if (!nonEmpty.at(-3)?.startsWith(MEETING_LEAD)) issues.push("「▼日程調整…」の定型文が URL の直前の行になっていません");
   }
   const nested = text.match(/（[^（）]*（[^（）]*）/);
   if (nested) issues.push(`括弧の中に括弧があります（「${nested[0]}…」）。要素は「／」で区切ってください`);

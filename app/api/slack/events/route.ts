@@ -62,8 +62,9 @@ export async function POST(req: Request) {
   if (!parsed.success) return new NextResponse(null, { status: 200 });
   if (parsed.data.type === "url_verification") return NextResponse.json({ challenge: parsed.data.challenge });
 
-  // 初回は3秒以内に 200 を返して after() で処理しているので、Slack の再送は処理しない
-  if (req.headers.get("x-slack-retry-num")) return new NextResponse(null, { status: 200 });
+  // Slack の再送（X-Slack-Retry-Num 付き）も通常どおり処理する。最初の受け取りが処理前に失敗しても取りこぼさないため。
+  // 二重処理は、投稿の ts の一意制約（dm_assists / dm_assist_revisions / post_topics / post_draft_revisions）で
+  // Claude を呼ぶ前に弾かれる
 
   const event = parsed.data.event;
   after(() => route(event));

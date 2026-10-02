@@ -3,7 +3,8 @@ import type { ActionContext, ActionResult } from "../slack/actions";
 import { db } from "../supabase";
 import { sendDm } from "../x/dm";
 import { loadApprovalView, markApprovalDone } from "./approval";
-import { sendBlockers } from "./generate";
+import { appendMeetingNote, sendBlockers } from "./generate";
+import { env } from "../env";
 import { BLOCK_PREFIX, isBlocked } from "./rules";
 import { isLeadCategory, upsertLead } from "./leads";
 import type { Classification } from "./schemas";
@@ -200,7 +201,8 @@ export async function submitEdited(args: { userId: string; privateMetadata: stri
   const { id } = JSON.parse(args.privateMetadata) as { id: number };
   const row = await claim(id, "sending");
   if (!row) return;
-  const text = args.text.trim();
+  // 人が編集した本文でも、日程調整 URL があれば★の一文を付ける（消されていても戻す。二重にはしない）
+  const text = appendMeetingNote(args.text.trim(), env().MEETING_URL) ?? "";
   // 念のため送信直前にもう一度チェックする（人が編集した本文も、自動の返信案と同じルール）
   const reasons = await blockersFor(row, text, false);
   if (reasons.length) {

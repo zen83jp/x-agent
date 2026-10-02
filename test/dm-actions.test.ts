@@ -53,7 +53,11 @@ vi.mock("@/lib/x/dm", () => ({ sendDm: (...args: unknown[]) => sendDm(...(args a
 vi.mock("@/lib/slack/client", () => ({ openModal: vi.fn() }));
 vi.mock("@/lib/dm/approval", () => ({ markApprovalDone: vi.fn(), loadApprovalView: vi.fn(async () => ({ slackChannel: null, slackTs: null })) }));
 const sendBlockers = vi.fn(async (_t: string): Promise<string[]> => []);
-vi.mock("@/lib/dm/generate", () => ({ sendBlockers: (t: string) => sendBlockers(t) }));
+vi.mock("@/lib/dm/generate", async () => {
+  const actual = await vi.importActual<typeof import("@/lib/dm/generate")>("@/lib/dm/generate");
+  return { sendBlockers: (t: string) => sendBlockers(t), appendMeetingNote: actual.appendMeetingNote };
+});
+vi.mock("@/lib/env", () => ({ env: () => ({ MEETING_URL: "https://app.spirinc.com/t/abc" }) }));
 
 const { dmActionHandlers, submitEdited, validateEdited } = await import("@/lib/dm/actions");
 const ctx = { userId: "U1", value: "7", channel: "C1", messageTs: "1.0" };
