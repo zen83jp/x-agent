@@ -177,6 +177,12 @@ describe("返信案の機械チェック", () => {
     expect(checkReplyText("ご連絡ありがとうございます。\n今回は見送らせていただきます。", allowed, meeting)).toEqual([]);
   });
 
+  it("括弧の中に括弧があれば要確認にする（「／」区切りなら問題なし）", () => {
+    const nested = checkReplyText("12ヶ月プラン2,500円です（税抜・月10時間から（10時間単位）のご契約）。", allowed, meeting);
+    expect(nested.join()).toContain("括弧の中に括弧があります");
+    expect(checkReplyText("12ヶ月プラン2,500円です（税抜／月10時間から・10時間単位のご契約）。", allowed, meeting)).toEqual([]);
+  });
+
   it("null なら何もしない", () => expect(checkReplyText(null, allowed, meeting)).toEqual([]));
 });
 

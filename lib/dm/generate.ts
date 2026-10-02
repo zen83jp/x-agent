@@ -187,5 +187,7 @@ export function checkReplyText(text: string | null, allowed: string[], meetingUr
   }
   const trailing = lines.filter((l) => !isBoilerplateLine(l, meetingUrl) && TRAILING_OFF.test(l));
   if (trailing.length) issues.push(`文が言いさしで終わっています: 「${trailing[0]}」`);
+  const nested = text.match(/（[^（）]*（[^（）]*）/);
+  if (nested) issues.push(`括弧の中に括弧があります（「${nested[0]}…」）。要素は「／」で区切ってください`);
   return issues;
 }
