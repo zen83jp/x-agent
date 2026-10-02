@@ -32,7 +32,14 @@ export type StyleGuideDraft = { id: number; version: number; posts: number; dmSa
  * 過去投稿と DM から文体ガイドの案を作り、style_guide に未承認（approved=false）で保存する。
  * 返信案や投稿案が参照するのは承認済みの版だけなので、案を作っても本番の文面には影響しない。
  */
-export async function buildStyleGuideDraft(maxPosts = 100): Promise<StyleGuideDraft> {
+/** 件数と期間はモデルに数えさせず、コードで数えて渡す（数え間違い防止） */
+export function summarize(posts: OwnPost[], dmCount: number): string {
+  const dates = posts.map((p) => p.created_at?.slice(0, 10)).filter((d): d is string => Boolean(d)).sort();
+  const range = dates.length ? `${dates[0]}〜${dates.at(-1)}` : "期間不明";
+  return `投稿: ${posts.length}件（${range}）／DM返信: ${dmCount}件`;
+}
+
+export async function buildStyleGuideDraft(maxPosts = 100, instructions?: string): Promise<StyleGuideDraft> {
   const { data: auth, error } = await db().from("x_auth").select("x_user_id").eq("id", 1).single();
   if (error) throw error;
 
@@ -41,11 +48,13 @@ export async function buildStyleGuideDraft(maxPosts = 100): Promise<StyleGuideDr
   const dms = await ownDmSamples(auth.x_user_id);
 
   const user = [
+    `<summary>${summarize(posts, dms.length)}</summary>`,
     `<posts>\n${posts.map(formatPost).join("\n\n")}\n</posts>`,
     `<dm_samples>\n${dms.length ? dms.map((t) => `--- \n${t}`).join("\n\n") : "（なし）"}\n</dm_samples>`,
   ].join("\n\n");
   const system =
     (await loadPrompt("style_guide_builder")) +
+    (instructions ? `\n\n## 今回の追加指示（代表から。上の指示より優先する）\n${instructions}` : "") +
     "\n\n## 出力の形式\nMarkdown の文体ガイド全文を JSON の `content` に入れて返す。";
 
   const res = await generateJson({ system, user, schema: outputSchema, maxTokens: 16000 });
