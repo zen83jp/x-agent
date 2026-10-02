@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { EDIT_VIEW_ID, dmActionHandlers, dmSyncActionHandlers, submitEdited } from "../dm/actions";
+import { postActionHandlers } from "../posts/actions";
 
 /** Slack の block_actions ペイロードのうち、使う部分だけを検証する */
 export const blockActionsPayload = z.object({
@@ -55,6 +56,7 @@ export type ActionHandler = (ctx: ActionContext) => Promise<ActionResult>;
 export const actionHandlers: Record<string, ActionHandler> = {
   health_ack: async () => ({ summary: "動作確認OK" }),
   ...dmActionHandlers,
+  ...postActionHandlers,
 };
 
 /**

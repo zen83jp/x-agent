@@ -90,10 +90,11 @@ export const X_OPS = {
 
 export type XOp = keyof typeof X_OPS;
 
-/** 事前の予算チェックで使う最悪値（max_results 件すべてが未課金だった場合） */
+/** 事前の予算チェックで使う最悪値（max_results 件、または ids の件数すべてが未課金だった場合） */
 export function estimateCostUsd(def: XOpDef, query?: Record<string, string | number | undefined>): number {
   if (def.billing.kind === "request") return def.billing.costUsd;
-  const n = Number(query?.max_results ?? 1);
+  const ids = typeof query?.ids === "string" ? query.ids.split(",").filter(Boolean).length : 0;
+  const n = Number(query?.max_results ?? (ids || 1));
   return def.billing.estimateUnitUsd * (Number.isFinite(n) && n > 0 ? n : 1);
 }
 

@@ -1,8 +1,10 @@
 import { after, NextResponse } from "next/server";
 import { z } from "zod";
-import { findAssist, reviseAssist, startAssist } from "@/lib/dm/assist";
+import { findAssist, reviseAssist, startAssist, stripMentions } from "@/lib/dm/assist";
+import { findDraftByThread, reviseDraft } from "@/lib/posts/revise";
+import { isTopicListCommand, parseTopic, saveTopic, stockTopics } from "@/lib/posts/topics";
 import { env } from "@/lib/env";
-import { notifyAlert } from "@/lib/slack/client";
+import { notifyAlert, postThreadReply } from "@/lib/slack/client";
 import { isTargetEvent } from "@/lib/slack/events";
 import { verifySlackSignature } from "@/lib/slack/verify";
 
@@ -68,12 +70,36 @@ export async function POST(req: Request) {
   return new NextResponse(null, { status: 200 });
 }
 
+/** `@x-agent ネタ：〇〇`（ネタの保存）と `@x-agent ネタ一覧`。処理したら true */
+async function handleTopicCommand(e: SlackEvent): Promise<boolean> {
+  const text = stripMentions(e.text);
+  const reply = (t: string) => postThreadReply({ channel: e.channel, threadTs: e.ts, text: t });
+  if (isTopicListCommand(text)) {
+    const topics = await stockTopics();
+    await reply(
+      topics.length
+        ? `ネタのストック（${topics.length}件。古い順に使います）\n${topics.map((t, i) => `${i + 1}. ${t.body.replace(/\s+/g, " ").slice(0, 60)}`).join("\n")}`
+        : "ネタのストックはありません。`@x-agent ネタ：〇〇` で追加できます。",
+    );
+    return true;
+  }
+  const topic = parseTopic(text);
+  if (topic === null) return false;
+  if (await saveTopic(topic, e.channel, e.ts)) {
+    await reply(`ネタを保存しました（ストック ${(await stockTopics()).length}件）。personal の投稿案は、このネタに書かれた事実の範囲だけで作ります。`);
+  }
+  return true;
+}
+
 async function route(e: SlackEvent): Promise<void> {
   try {
     if (!isTargetEvent(e, env().SLACK_CHANNEL_ID)) return;
     const inThread = Boolean(e.thread_ts && e.thread_ts !== e.ts);
 
     if (inThread) {
+      // 【投稿承認】のスレッド → 投稿案の作り直し
+      const draft = await findDraftByThread(e.thread_ts!);
+      if (draft) return await reviseDraft(draft, e.ts, e.text);
       const assist = await findAssist(e.thread_ts!);
       // 返信アシスタントのスレッド内 → 作り直し（メンションの有無を問わず、ts で1回に絞られる）
       if (assist) return await reviseAssist(assist, e.ts, e.text);
@@ -85,6 +111,7 @@ async function route(e: SlackEvent): Promise<void> {
     }
     // チャンネル直下はメンションされたものだけ
     if (e.type === "app_mention") {
+      if (await handleTopicCommand(e)) return;
       await startAssist({ channel: e.channel, rootTs: e.ts, messageTs: e.ts, text: e.text, files: e.files });
     }
   } catch (err) {

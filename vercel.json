@@ -1,5 +1,11 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
-  "crons": [{ "path": "/api/cron/dm-poll", "schedule": "*/5 * * * *" }]
+  "crons": [
+    { "path": "/api/cron/dm-poll", "schedule": "*/5 * * * *" },
+    { "path": "/api/cron/post-drafts", "schedule": "0 12 * * *" },
+    { "path": "/api/cron/post-publish", "schedule": "*/5 * * * *" },
+    { "path": "/api/cron/post-metrics", "schedule": "15 * * * *" },
+    { "path": "/api/cron/post-history", "schedule": "0 0 * * 1" }
+  ]
 }
