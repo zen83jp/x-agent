@@ -1,4 +1,5 @@
 import type { KnownBlock } from "@slack/web-api";
+import { BLOCK_PREFIX } from "./rules";
 import type { Category, Classification } from "./schemas";
 
 /** Slack mrkdwn の制御文字をエスケープ */
@@ -57,7 +58,16 @@ export type ApprovalView = {
   failure?: string | null;
   /** 処理済みならボタンの代わりに表示する一文 */
   done?: string | null;
+  /** 差し戻しのルールに引っかかったまま（要修正）。［送信］［丁寧に断る］を出さない */
+  blocked?: boolean;
 };
+
+/** 要修正のときのボタン: そのまま送るボタンを外し、［修正して送信］を先頭にする */
+export function buttonsFor(mode: ApprovalMode, blocked: boolean): Button[] {
+  if (!blocked) return BUTTONS[mode];
+  const rest = BUTTONS[mode].filter((b) => b.action_id !== "dm_send" && b.action_id !== "dm_decline" && b.action_id !== "dm_edit");
+  return [{ text: "修正して送信", action_id: "dm_edit", style: "primary" }, ...rest];
+}
 
 /** 【DM承認】メッセージの本体（ラベルは postMessage が付ける） */
 export function buildApprovalBlocks(v: ApprovalView): { text: string; blocks: KnownBlock[] } {
@@ -81,15 +91,23 @@ export function buildApprovalBlocks(v: ApprovalView): { text: string; blocks: Kn
     const title = v.mode === "decline" ? "お断り文" : "返信案";
     blocks.push({ type: "section", text: { type: "mrkdwn", text: `*${title}*\n${quote(draft)}` } });
   }
-  if (v.checks.length) {
-    blocks.push({ type: "section", text: { type: "mrkdwn", text: `*要確認*\n${v.checks.map((c) => `• ${esc(c)}`).join("\n")}` } });
+  const mustFix = v.checks.filter((c) => c.startsWith(BLOCK_PREFIX)).map((c) => c.slice(BLOCK_PREFIX.length));
+  const toCheck = v.checks.filter((c) => !c.startsWith(BLOCK_PREFIX));
+  if (mustFix.length) {
+    blocks.push({
+      type: "section",
+      text: { type: "mrkdwn", text: `:warning: *要修正（このままでは送信できません）*\n${mustFix.map((c) => `• ${esc(c)}`).join("\n")}` },
+    });
+  }
+  if (toCheck.length) {
+    blocks.push({ type: "section", text: { type: "mrkdwn", text: `*要確認*\n${toCheck.map((c) => `• ${esc(c)}`).join("\n")}` } });
   }
   if (v.done) {
     blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: `:white_check_mark: ${esc(v.done)}` }] });
   } else {
     blocks.push({
       type: "actions",
-      elements: BUTTONS[v.mode].map((b) => ({
+      elements: buttonsFor(v.mode, Boolean(v.blocked)).map((b) => ({
         type: "button",
         action_id: b.action_id,
         value: String(v.messageId),

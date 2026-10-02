@@ -39,7 +39,7 @@ export async function POST(req: Request) {
   }
 
   const view = viewSubmissionPayload.safeParse(raw);
-  if (view.success) return handleViewSubmission(view.data);
+  if (view.success) return await handleViewSubmission(view.data);
 
   const parsed = blockActionsPayload.safeParse(raw);
   // 未対応の種類は Slack にエラーを返さない
@@ -59,7 +59,7 @@ export async function POST(req: Request) {
   return new NextResponse(null, { status: 200 });
 }
 
-function handleViewSubmission(p: ViewSubmissionPayload): Response {
+async function handleViewSubmission(p: ViewSubmissionPayload): Promise<Response> {
   const entry = viewHandlers[p.view.callback_id];
   if (!entry) return new NextResponse(null, { status: 200 });
   const text = p.view.state.values[entry.block]?.[entry.action]?.value?.trim() ?? "";
@@ -67,6 +67,9 @@ function handleViewSubmission(p: ViewSubmissionPayload): Response {
     // モーダルを閉じずに入力欄にエラーを表示する
     return NextResponse.json({ response_action: "errors", errors: { [entry.block]: "文面を入力してください" } });
   }
+  // 差し戻しのルールに引っかかれば、モーダルを閉じずに理由を表示する（送信しない）
+  const invalid = entry.validate ? await entry.validate(text) : null;
+  if (invalid) return NextResponse.json({ response_action: "errors", errors: { [entry.block]: invalid } });
   after(async () => {
     try {
       await entry.handler({ userId: p.user.id, privateMetadata: p.view.private_metadata, text });

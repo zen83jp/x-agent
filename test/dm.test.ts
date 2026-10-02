@@ -100,6 +100,14 @@ describe("buildApprovalBlocks", () => {
     expect(JSON.stringify(blocks)).not.toContain("返信案です");
   });
 
+  it("要修正が残っていたら［送信］を出さず、［修正して送信］を先頭にする", () => {
+    const blocked = buildApprovalBlocks({ ...base, mode: "normal", blocked: true, checks: ["要修正: 金額（2,500円）と同じ文に「税抜」がありません"] });
+    expect(buttons(blocked.blocks)).toEqual(["dm_edit", "dm_skip", "dm_lead_only"]);
+    expect(JSON.stringify(blocked.blocks)).toContain("要修正（このままでは送信できません）");
+    const decline = buildApprovalBlocks({ ...base, classification: cls("sales_pitch"), mode: "decline", blocked: true });
+    expect(buttons(decline.blocks)).toEqual(["dm_edit", "dm_skip"]);
+  });
+
   it("escalate は [自分で書いて送信][送らない]", () => {
     expect(buttons(buildApprovalBlocks({ ...base, mode: "manual", draft: null }).blocks)).toEqual(["dm_edit", "dm_skip"]);
   });
@@ -138,9 +146,8 @@ describe("返信案の機械チェック", () => {
     expect(checkReplyText("あ".repeat(201), allowed, meeting).join()).toContain("200字を超えています（201字");
   });
 
-  it("FAQ に載っている URL は許可し、それ以外は要確認にする", () => {
+  it("URL の許可・不許可は差し戻しのルール（rules.ts）で見るので、体裁のチェックには出さない", () => {
     expect(checkReplyText("応募はこちらからお願いします。\nhttps://taskar.online/staff/", allowed, meeting)).toEqual([]);
-    expect(checkReplyText("詳しくはこちらをご覧ください。\nhttps://example.com", allowed, meeting).join()).toContain("example.com");
   });
 
   it("定型文や URL が本文と同じ行にあれば要確認にする", () => {

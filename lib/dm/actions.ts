@@ -1,8 +1,10 @@
-import { openModal } from "../slack/client";
+import { openModal, postThreadReply } from "../slack/client";
 import type { ActionContext, ActionResult } from "../slack/actions";
 import { db } from "../supabase";
 import { sendDm } from "../x/dm";
-import { markApprovalDone } from "./approval";
+import { loadApprovalView, markApprovalDone } from "./approval";
+import { sendBlockers } from "./generate";
+import { BLOCK_PREFIX, isBlocked } from "./rules";
 import { isLeadCategory, upsertLead } from "./leads";
 import type { Classification } from "./schemas";
 
@@ -13,11 +15,12 @@ type ClaimedRow = {
   classification: Classification | null;
   draft_reply: string | null;
   decline_reply: string | null;
+  needs_human_check: string[] | null;
   dm_threads: { x_conversation_id: string; x_user_id: string; x_username: string | null; x_name: string | null };
 };
 
 const SELECT =
-  "id, thread_id, category, classification, draft_reply, decline_reply, dm_threads(x_conversation_id, x_user_id, x_username, x_name)";
+  "id, thread_id, category, classification, draft_reply, decline_reply, needs_human_check, dm_threads(x_conversation_id, x_user_id, x_username, x_name)";
 
 function parseId(value: string | undefined): number {
   const id = Number(value);
@@ -83,13 +86,43 @@ async function sendAndRecord(row: ClaimedRow, text: string, editedByHuman: boole
   await setThread(row.thread_id, { status: "replied" });
 }
 
+/** 送信をやめて、承認待ちに戻す */
+async function releaseClaim(id: number): Promise<void> {
+  await db().from("dm_messages").update({ send_status: "pending" }).eq("id", id);
+}
+
+/**
+ * 送信直前の差し戻しチェック。止める理由を返す（空なら送ってよい）。
+ * 返信案に「要修正」が残っているもの（デプロイ前に出た【DM承認】の［送信］ボタンを含む）と、
+ * 実際に送る文面がルールに引っかかるものを止める。
+ */
+async function blockersFor(row: ClaimedRow, text: string, fromDraft: boolean): Promise<string[]> {
+  const stored = fromDraft && isBlocked(row.needs_human_check)
+    ? (row.needs_human_check ?? []).filter((c) => c.startsWith(BLOCK_PREFIX)).map((c) => c.slice(BLOCK_PREFIX.length))
+    : [];
+  const live = await sendBlockers(text);
+  return [...new Set([...stored, ...live])];
+}
+
+export class SendBlockedError extends Error {
+  constructor(readonly reasons: string[]) {
+    super(`送信を止めました（要修正）。[修正して送信] から直してください: ${reasons.join(" / ")}`);
+    this.name = "SendBlockedError";
+  }
+}
+
 async function send(ctx: ActionContext, pick: (r: ClaimedRow) => string | null, label: string): Promise<ActionResult> {
   const row = await claim(parseId(ctx.value), "sending");
   if (!row) return ALREADY_DONE;
   const text = pick(row);
   if (!text) {
-    await db().from("dm_messages").update({ send_status: "pending" }).eq("id", row.id);
+    await releaseClaim(row.id);
     throw new Error("送信する文面がありません。[修正して送信] から文面を入力してください");
+  }
+  const reasons = await blockersFor(row, text, true);
+  if (reasons.length) {
+    await releaseClaim(row.id);
+    throw new SendBlockedError(reasons);
   }
   await sendAndRecord(row, text, false);
   return { summary: label };
@@ -156,12 +189,32 @@ async function openEditor(ctx: ActionContext): Promise<ActionResult> {
   return { summary: "", keepButtons: true };
 }
 
+/** モーダルの入力チェック（送信前にモーダル上で理由を返す）。問題なければ null */
+export async function validateEdited(text: string): Promise<string | null> {
+  const reasons = await sendBlockers(text.trim());
+  return reasons.length ? `送信できません（要修正）: ${reasons.join(" / ")}` : null;
+}
+
 /** モーダルの [送信] */
 export async function submitEdited(args: { userId: string; privateMetadata: string; text: string }): Promise<void> {
   const { id } = JSON.parse(args.privateMetadata) as { id: number };
   const row = await claim(id, "sending");
   if (!row) return;
   const text = args.text.trim();
+  // 念のため送信直前にもう一度チェックする（人が編集した本文も、自動の返信案と同じルール）
+  const reasons = await blockersFor(row, text, false);
+  if (reasons.length) {
+    await releaseClaim(row.id);
+    const view = await loadApprovalView(id);
+    if (view.slackChannel && view.slackTs) {
+      await postThreadReply({
+        channel: view.slackChannel,
+        threadTs: view.slackTs,
+        text: `:warning: 送信を止めました（要修正）: ${reasons.join(" / ")}`,
+      });
+    }
+    return;
+  }
   const original = (row.category === "sales_pitch" || row.category === "invitation" ? row.decline_reply : row.draft_reply) ?? "";
   await sendAndRecord(row, text, text !== original.trim());
   const when = new Date().toLocaleString("ja-JP", { timeZone: "Asia/Tokyo" });

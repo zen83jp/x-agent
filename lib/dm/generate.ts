@@ -1,6 +1,7 @@
 import { generateJson, loadPrompt, type JsonResult } from "../claude";
 import { env } from "../env";
 import { db } from "../supabase";
+import { BLOCK_PREFIX, blockingIssues } from "./rules";
 import { classificationSchema, replySchema, type Classification, type DmContext, type Reply } from "./schemas";
 
 const MAX_REPLY_CHARS = 200;
@@ -80,17 +81,48 @@ export async function draftReply(
   }
   // 作り直しのルールも dm_reply.md に書いてある（<revision_instructions> があるとき）
   const system = await loadPrompt("dm_reply");
-  const res = await generateJson({ system, user: parts.join("\n") + noteBlock(ctx), schema: replySchema, maxTokens: 4096 });
-  if (!res.ok) return res;
   const meetingUrl = env().MEETING_URL;
   const allowed = allowedUrls(meetingUrl, faqs);
+  const generate = (extra: string[]) =>
+    generateJson({ system, user: [...parts, ...extra].join("\n") + noteBlock(ctx), schema: replySchema, maxTokens: 4096 });
+  const blockingOf = (r: Reply) => [
+    ...blockingIssues(r.reply, allowed),
+    ...blockingIssues(r.decline_reply, allowed).map((c) => `お断り文: ${c}`),
+  ];
+
+  let res = await generate([]);
+  if (!res.ok) return res;
+  let blocking = blockingOf(res.data);
+  // 差し戻し: 理由を添えて1回だけ作り直す。それでも残れば「要修正」として［送信］を出さない
+  if (blocking.length) {
+    const retry = await generate([
+      `<rejected_reply>\n${replyTextFor(classification, res.data) ?? ""}\n</rejected_reply>`,
+      `<rejection_reasons>\n${blocking.map((b) => `- ${b}`).join("\n")}\n</rejection_reasons>`,
+    ]);
+    if (retry.ok) {
+      res = retry;
+      blocking = blockingOf(retry.data);
+    }
+  }
+
   const checks = [
+    ...blocking.map((b) => `${BLOCK_PREFIX}${b}`),
     ...res.data.needs_human_check,
     ...checkReplyText(res.data.reply, allowed, meetingUrl),
     ...checkReplyText(res.data.decline_reply, allowed, meetingUrl).map((c) => `お断り文: ${c}`),
     ...(revision ? checkShortened(revision, replyTextFor(classification, res.data), meetingUrl) : []),
   ];
   return { ok: true, data: { ...res.data, needs_human_check: checks } };
+}
+
+/**
+ * 送信直前のチェック（［送信］［丁寧に断る］［修正して送信］のすべて）。差し戻しの理由を返す（空なら送ってよい）。
+ * 返信案の生成時と同じルールを、実際に送る文面にかける。
+ */
+export async function sendBlockers(text: string): Promise<string[]> {
+  const { data, error } = await db().from("faq").select("answer").eq("active", true);
+  if (error) throw error;
+  return blockingIssues(text, allowedUrls(env().MEETING_URL, data ?? []));
 }
 
 /** 表示・送信する文面（営業・招待はお断り文、それ以外は返信案） */
@@ -133,15 +165,15 @@ export function countBodyChars(text: string, meetingUrl: string): number {
   return [...text.split("\n").filter((l) => !isBoilerplateLine(l, meetingUrl)).join("")].length;
 }
 
-/** 返信案の機械チェック。問題は「要確認」として表示するだけで、送信は止めない */
+/**
+ * 返信案の機械チェック（文面の体裁）。問題は「要確認」として表示するだけで、送信は止めない。
+ * 送信を止めるルール（割引表現・税抜・途中解約不可・自動更新・通常5営業日・許可外 URL）は rules.ts の blockingIssues
+ */
 export function checkReplyText(text: string | null, allowed: string[], meetingUrl: string): string[] {
   if (!text) return [];
   const issues: string[] = [];
   const length = countBodyChars(text, meetingUrl);
   if (length > MAX_REPLY_CHARS) issues.push(`本文が${MAX_REPLY_CHARS}字を超えています（${length}字。日程調整の定型文と URL を除く）`);
-  for (const url of text.match(URL_IN_TEXT) ?? []) {
-    if (!allowed.some((a) => url.startsWith(a))) issues.push(`許可されていない URL が含まれています: ${url}`);
-  }
   const lines = text.split("\n").map((l) => l.trim());
   if (text.includes(meetingUrl) && !lines.includes(meetingUrl)) issues.push("日程調整 URL が独立した行になっていません");
   if (text.includes(MEETING_LEAD) && !lines.some((l) => l.startsWith(MEETING_LEAD))) {

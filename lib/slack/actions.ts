@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { EDIT_VIEW_ID, dmActionHandlers, dmSyncActionHandlers, submitEdited } from "../dm/actions";
+import { EDIT_VIEW_ID, dmActionHandlers, dmSyncActionHandlers, submitEdited, validateEdited } from "../dm/actions";
 import { postActionHandlers } from "../posts/actions";
 
 /** Slack の block_actions ペイロードのうち、使う部分だけを検証する */
@@ -68,7 +68,13 @@ export const syncActionHandlers: Record<string, ActionHandler> = {
 
 export type ViewHandler = (args: { userId: string; privateMetadata: string; text: string }) => Promise<void>;
 
-/** callback_id → モーダル送信時のハンドラ（after() で実行） */
-export const viewHandlers: Record<string, { handler: ViewHandler; block: string; action: string }> = {
-  [EDIT_VIEW_ID]: { handler: submitEdited, block: "reply", action: "reply_text" },
+/**
+ * callback_id → モーダル送信時のハンドラ（after() で実行）。
+ * validate はモーダルを閉じる前に同期で実行し、問題があればモーダル上にその理由を表示する。
+ */
+export const viewHandlers: Record<
+  string,
+  { handler: ViewHandler; block: string; action: string; validate?: (text: string) => Promise<string | null> }
+> = {
+  [EDIT_VIEW_ID]: { handler: submitEdited, block: "reply", action: "reply_text", validate: validateEdited },
 };

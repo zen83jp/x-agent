@@ -5,6 +5,7 @@ import { db } from "../supabase";
 import { NO_DRAFT_CATEGORIES, classifyDm, draftReply, replyTextFor } from "./generate";
 import { isLeadCategory, normalizeUsername, upsertLead } from "./leads";
 import { screenshotSchema, type Classification, type DmContext, type Reply, type Screenshot } from "./schemas";
+import { BLOCK_PREFIX } from "./rules";
 import { esc } from "./slack";
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -78,12 +79,17 @@ export function buildSummary(args: {
 }): string {
   const { ctx, classification: c } = args;
   const who = [ctx.sender.name, ctx.sender.username && `@${ctx.sender.username}`].filter(Boolean).join(" ") || "（読み取れず）";
+  const mustFix = args.checks.filter((c) => c.startsWith(BLOCK_PREFIX)).map((c) => c.slice(BLOCK_PREFIX.length));
+  const toCheck = args.checks.filter((c) => !c.startsWith(BLOCK_PREFIX));
   const lines = [
+    ...(mustFix.length
+      ? [`:warning: *要修正：このまま送らないでください*\n${mustFix.map((x) => `• ${esc(x)}`).join("\n")}\n（スレッドで「税抜を付けて」などと返信すると作り直します）`]
+      : []),
     `*相手*: ${esc(who)}`,
     `*分類*: ${c.category}（確度 ${c.confidence.toFixed(2)}）— ${esc(c.reason)}`,
   ];
   if (args.lead === "created_or_updated") lines.push("*リード*: 登録／更新しました");
-  if (args.checks.length) lines.push(`*要確認*\n${args.checks.map((x) => `• ${esc(x)}`).join("\n")}`);
+  if (toCheck.length) lines.push(`*要確認*\n${toCheck.map((x) => `• ${esc(x)}`).join("\n")}`);
   if (args.replyText) {
     lines.push(isDecline(c) ? "↓ お断り文（コピーして X アプリから送信）" : "↓ 返信案（コピーして X アプリから送信）");
   } else if (c.category === "escalate") {
@@ -226,7 +232,15 @@ export async function reviseAssist(assist: AssistRow, messageTs: string, rawText
 
     const checks = drafted.data.needs_human_check;
     await say(
-      [`指示を反映しました（${instructions.length}回目）`, ...(checks.length ? [`*要確認*\n${checks.map((x) => `• ${esc(x)}`).join("\n")}`] : [])].join("\n"),
+      [
+        `指示を反映しました（${instructions.length}回目）`,
+        ...(checks.some((x) => x.startsWith(BLOCK_PREFIX))
+          ? [`:warning: *要修正：このまま送らないでください*\n${checks.filter((x) => x.startsWith(BLOCK_PREFIX)).map((x) => `• ${esc(x.slice(BLOCK_PREFIX.length))}`).join("\n")}`]
+          : []),
+        ...(checks.some((x) => !x.startsWith(BLOCK_PREFIX))
+          ? [`*要確認*\n${checks.filter((x) => !x.startsWith(BLOCK_PREFIX)).map((x) => `• ${esc(x)}`).join("\n")}`]
+          : []),
+      ].join("\n"),
     );
     await postThreadReply({ channel: assist.slack_channel, threadTs: assist.slack_ts, ...copyable(text) });
     await db().from("dm_assist_revisions").update({ reply: drafted.data }).eq("id", rev.id);

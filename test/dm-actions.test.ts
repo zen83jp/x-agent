@@ -12,6 +12,7 @@ const row = {
   classification: null,
   draft_reply: "返信案です",
   decline_reply: null,
+  needs_human_check: [] as string[],
   dm_threads: { x_conversation_id: "111-222", x_user_id: "111", x_username: "yamada", x_name: "山田" },
 };
 
@@ -50,15 +51,43 @@ vi.mock("@/lib/supabase", () => ({ db: () => ({ from: () => query() }) }));
 const sendDm = vi.fn(async () => "evt-1");
 vi.mock("@/lib/x/dm", () => ({ sendDm: (...args: unknown[]) => sendDm(...(args as [])) }));
 vi.mock("@/lib/slack/client", () => ({ openModal: vi.fn() }));
-vi.mock("@/lib/dm/approval", () => ({ markApprovalDone: vi.fn() }));
+vi.mock("@/lib/dm/approval", () => ({ markApprovalDone: vi.fn(), loadApprovalView: vi.fn(async () => ({ slackChannel: null, slackTs: null })) }));
+const sendBlockers = vi.fn(async (_t: string): Promise<string[]> => []);
+vi.mock("@/lib/dm/generate", () => ({ sendBlockers: (t: string) => sendBlockers(t) }));
 
-const { dmActionHandlers } = await import("@/lib/dm/actions");
+const { dmActionHandlers, submitEdited, validateEdited } = await import("@/lib/dm/actions");
 const ctx = { userId: "U1", value: "7", channel: "C1", messageTs: "1.0" };
 
 describe("DM 承認ボタン", () => {
   beforeEach(() => {
     state.send_status = "pending";
+    row.needs_human_check = [];
     sendDm.mockClear();
+    sendBlockers.mockClear();
+  });
+
+  it("要修正が残っている返信案は［送信］を押しても送らず、承認待ちに戻して理由を返す（古いボタン対策）", async () => {
+    row.needs_human_check = ["要修正: 金額（2,500円）と同じ文に「税抜」がありません"];
+    await expect(dmActionHandlers.dm_send(ctx)).rejects.toThrow("送信を止めました（要修正）");
+    expect(sendDm).not.toHaveBeenCalled();
+    expect(state.send_status).toBe("pending");
+  });
+
+  it("送る文面がルールに引っかかれば、要修正の印がなくても送らない", async () => {
+    sendBlockers.mockResolvedValueOnce(["割引を連想させる表現は使えません（「お得」。割引制度はありません）"]);
+    await expect(dmActionHandlers.dm_send(ctx)).rejects.toThrow("「お得」");
+    expect(sendDm).not.toHaveBeenCalled();
+    expect(state.send_status).toBe("pending");
+  });
+
+  it("［修正して送信］も送信直前にチェックし、引っかかればモーダルで理由を返して送らない", async () => {
+    sendBlockers.mockResolvedValue(["「税込」は使えません（税込価格は公開していません）"]);
+    expect(await validateEdited("税込27,500円です。")).toContain("「税込」は使えません");
+    await submitEdited({ userId: "U1", privateMetadata: JSON.stringify({ id: 7 }), text: "税込27,500円です。" });
+    expect(sendDm).not.toHaveBeenCalled();
+    expect(state.send_status).toBe("pending");
+    sendBlockers.mockResolvedValue([]);
+    expect(await validateEdited("ご連絡ありがとうございます。")).toBeNull();
   });
 
   it("[送信] で返信案を送り、sent になる", async () => {

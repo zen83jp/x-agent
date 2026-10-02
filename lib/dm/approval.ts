@@ -1,5 +1,6 @@
 import { postMessage, updateMessage, withLabel } from "../slack/client";
 import { db } from "../supabase";
+import { isBlocked } from "./rules";
 import type { Classification } from "./schemas";
 import { approvalModeFor, buildApprovalBlocks, type ApprovalView } from "./slack";
 
@@ -34,6 +35,7 @@ export async function loadApprovalView(messageId: number, done?: string | null):
     checks: checks.filter((c) => !c.startsWith("要手動対応:")),
     failure,
     done: done ?? null,
+    blocked: isBlocked(checks),
     slackChannel: m.slack_channel,
     slackTs: m.slack_ts,
   };
