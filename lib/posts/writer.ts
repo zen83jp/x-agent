@@ -18,6 +18,8 @@ export type WriteContext = {
   revision?: { previousBody: string; instructions: string[] };
   /** 自分自身（作り直し中の案）を重複判定から外す */
   excludeDraftId?: number;
+  /** 同じ日の他の投稿案（締めの言い回しを変えるため） */
+  batchBodies?: string[];
 };
 
 export type Written = { body: string; reason: string; theme: string; review: ReviewNote };
@@ -70,6 +72,7 @@ function commonParts(ctx: WriteContext, inputs: Inputs): string[] {
     `<recent_posts>\n${list(inputs.recentPosts)}\n</recent_posts>`,
     `<avoid_angles>\n${list(inputs.avoidAngles)}\n</avoid_angles>`,
     `<recent_drafts>\n${list(inputs.recentDrafts)}\n</recent_drafts>`,
+    `<batch_drafts>\n${list(ctx.batchBodies ?? [])}\n</batch_drafts>`,
   ];
 }
 

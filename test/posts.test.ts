@@ -3,7 +3,7 @@ import { mechanicalCheck } from "@/lib/posts/checks";
 import { DEFAULT_SLOTS, nextJstDate, parseSlots } from "@/lib/posts/daily";
 import { suggestFabricated } from "@/lib/posts/history";
 import { dueCheckpoints } from "@/lib/posts/metrics";
-import { buildPostApprovalBlocks, formatJst, nextSlotTime } from "@/lib/posts/slack";
+import { buildPostApprovalBlocks, formatJst, nextSlotTime, slotTimeForIndex } from "@/lib/posts/slack";
 import { similarity, weightedLength } from "@/lib/posts/text";
 import { isTopicListCommand, parseTopic } from "@/lib/posts/topics";
 
@@ -62,6 +62,12 @@ describe("機械チェック", () => {
     expect(r.warnings[0]).toContain("過去の投稿と似ています");
     expect(mechanicalCheck("強いチームは、小さな感謝から生まれる。", pool).warnings).toEqual([]);
   });
+  it("「いちばん」「一番」「最も」は止めずに要確認として出す", () => {
+    const r = mechanicalCheck("小さな約束の積み重ねが、いちばん確かな近道だと思う。", []);
+    expect(r.errors).toEqual([]);
+    expect(r.warnings[0]).toContain("「いちばん」");
+    expect(mechanicalCheck("最も大切なのは、目的を伝えること。", []).warnings[0]).toContain("「最も」");
+  });
   it("類似度", () => {
     expect(similarity("今日も一日がんばりましょう", "今日も一日がんばりましょう！")).toBe(1);
     expect(similarity("完璧より継続", "チームは感謝から")).toBeLessThan(0.1);
@@ -86,19 +92,23 @@ describe("ネタの入力", () => {
 
 describe("【投稿承認】のボタン", () => {
   const view = { draftId: 9, dayLabel: "10/03（土）", reason: "狙い", body: "本文", topic: null, review: null };
-  const actions = (kind: "greeting" | "business" | "personal") =>
-    (buildPostApprovalBlocks({ ...view, kind }).blocks.find((b) => b.type === "actions") as { elements: { action_id: string }[] }).elements.map(
+  const actions = (kind: "greeting" | "business" | "personal", slotTime: "07:30" | "12:10" | "20:30" | null) =>
+    (buildPostApprovalBlocks({ ...view, kind, slotTime }).blocks.find((b) => b.type === "actions") as { elements: { action_id: string }[] }).elements.map(
       (e) => e.action_id,
     );
-  it("greeting は 7:30 が先頭", () => {
-    expect(actions("greeting")).toEqual(["post_approve_0730", "post_approve_1210", "post_approve_2030", "post_reject"]);
+  it("枠の既定時刻が先頭（1枠目 7:30／2枠目 12:10／3枠目 20:30）", () => {
+    expect(actions("greeting", slotTimeForIndex(0))).toEqual(["post_approve_0730", "post_approve_1210", "post_approve_2030", "post_reject"]);
+    expect(actions("business", slotTimeForIndex(1))[0]).toBe("post_approve_1210");
+    // personal 枠を business で埋めた3枠目も 20:30 が先頭（2枠目と同じ 12:10 にならない）
+    expect(actions("business", slotTimeForIndex(2))).toEqual(["post_approve_2030", "post_approve_0730", "post_approve_1210", "post_reject"]);
+    expect(slotTimeForIndex(5)).toBe("20:30");
   });
-  it("business は 12:10、personal は 20:30 が先頭", () => {
-    expect(actions("business")[0]).toBe("post_approve_1210");
-    expect(actions("personal")[0]).toBe("post_approve_2030");
+  it("既定時刻のない古い案は種類で決める", () => {
+    expect(actions("greeting", null)[0]).toBe("post_approve_0730");
+    expect(actions("personal", null)[0]).toBe("post_approve_2030");
   });
   it("処理済み・期限切れならボタンを消す", () => {
-    const { blocks } = buildPostApprovalBlocks({ ...view, kind: "greeting", done: "期限切れ" });
+    const { blocks } = buildPostApprovalBlocks({ ...view, kind: "greeting", slotTime: "07:30", done: "期限切れ" });
     expect(blocks.some((b) => b.type === "actions")).toBe(false);
     expect(JSON.stringify(blocks)).toContain("期限切れ");
   });

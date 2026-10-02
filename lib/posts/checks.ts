@@ -3,6 +3,8 @@ import { X_MAX_WEIGHTED, findDuplicates, weightedLength } from "./text";
 
 const TRAILING_OFF = /(れば|たら|ので|けど|けれど)[。！!]?$/;
 const SUPERLATIVE = /必ず|絶対|No\.?\s?1|ナンバーワン|業界初|最安|日本一|世界一/i;
+/** 最上級に近い言い方。意見として使うこともあるので、止めずに要確認として表示する */
+const SOFT_SUPERLATIVE = /いちばん|一番|最も/;
 
 export type MechanicalResult = {
   /** 投稿してはいけない問題（URL）。この案は使わない */
@@ -29,6 +31,9 @@ export function mechanicalCheck(body: string, pool: { body: string; label: strin
   if (SUPERLATIVE.test(body)) errors.push("断定・最上級の表現が含まれています");
   const trailing = body.split("\n").map((l) => l.trim()).find((l) => TRAILING_OFF.test(l));
   if (trailing) errors.push(`文が言いさしで終わっています: 「${trailing}」`);
+
+  const soft = body.match(SOFT_SUPERLATIVE);
+  if (soft) warnings.push(`最上級に近い言い方があります（「${soft[0]}」）。意見として自然か確認してください`);
 
   const dup = findDuplicates(body, pool)[0];
   if (dup) warnings.push(`${dup.label}と似ています（類似度 ${dup.score.toFixed(2)}）: 「${dup.body.replace(/\s+/g, " ").slice(0, 30)}…」`);

@@ -43,6 +43,12 @@ export async function reviseDraft(draft: DraftRow, messageTs: string, rawText: s
     if (hErr) throw hErr;
     const instructions = (history ?? []).map((h) => h.instruction);
     const topic = Array.isArray(draft.post_topics) ? draft.post_topics[0] : draft.post_topics;
+    const { data: siblings } = await db()
+      .from("post_drafts")
+      .select("body")
+      .eq("target_date", draft.day_context?.date ?? "")
+      .neq("id", draft.id)
+      .in("review_status", ["awaiting_approval", "approved"]);
 
     const written = await writeAndReview({
       kind: draft.kind,
@@ -50,6 +56,7 @@ export async function reviseDraft(draft: DraftRow, messageTs: string, rawText: s
       topic: topic?.body,
       revision: { previousBody: draft.body, instructions },
       excludeDraftId: draft.id,
+      batchBodies: (siblings ?? []).map((s) => s.body),
     });
     if ("failed" in written) return void (await say(`:warning: 作り直しに失敗しました（${esc(written.failed)}）`));
 

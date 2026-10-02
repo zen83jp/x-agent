@@ -3,6 +3,7 @@ import { db, getSetting } from "../supabase";
 import { dayContext, jstDateOf } from "./calendar";
 import { postDraftApproval } from "./approval";
 import { POST_KINDS, type PostKind } from "./schemas";
+import { slotTimeForIndex } from "./slack";
 import { releaseTopic, reserveTopic } from "./topics";
 import { writeAndReview } from "./writer";
 
@@ -41,7 +42,8 @@ export async function createDailyDrafts(now = new Date(), targetDate = nextJstDa
 
   const created: DailyResult["created"] = [];
   const failed: string[] = [];
-  for (const prefs of slots) {
+  const batchBodies: string[] = [];
+  for (const [index, prefs] of slots.entries()) {
     let kind: PostKind | null = null;
     let topic: { id: number; body: string } | null = null;
     for (const k of prefs) {
@@ -57,7 +59,7 @@ export async function createDailyDrafts(now = new Date(), targetDate = nextJstDa
     }
     if (!kind) continue;
 
-    const written = await writeAndReview({ kind, day, topic: topic?.body });
+    const written = await writeAndReview({ kind, day, topic: topic?.body, batchBodies });
     if ("failed" in written) {
       await releaseTopic(topic?.id);
       failed.push(`${kind}: ${written.failed}`);
@@ -67,6 +69,7 @@ export async function createDailyDrafts(now = new Date(), targetDate = nextJstDa
       .from("post_drafts")
       .insert({
         kind,
+        slot_time: slotTimeForIndex(index),
         body: written.body,
         reason: written.reason,
         theme: written.theme,
@@ -84,6 +87,7 @@ export async function createDailyDrafts(now = new Date(), targetDate = nextJstDa
     }
     if (topic) await db().from("post_topics").update({ draft_id: data.id }).eq("id", topic.id);
     await postDraftApproval(data.id);
+    batchBodies.push(written.body);
     created.push({ id: data.id, kind });
   }
 

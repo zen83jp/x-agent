@@ -6,12 +6,18 @@ import type { PostKind, ReviewNote } from "./schemas";
 export const SLOTS = ["07:30", "12:10", "20:30"] as const;
 export type Slot = (typeof SLOTS)[number];
 
-/** 種類ごとの承認ボタンの並び（先頭が推奨の時刻） */
-export const SLOT_ORDER: Record<PostKind, Slot[]> = {
-  greeting: ["07:30", "12:10", "20:30"],
-  business: ["12:10", "20:30", "07:30"],
-  personal: ["20:30", "12:10", "07:30"],
-};
+/** 枠の順番（0始まり）→ 既定の投稿時刻。1枠目 7:30／2枠目 12:10／3枠目以降 20:30 */
+export function slotTimeForIndex(i: number): Slot {
+  return SLOTS[Math.min(i, SLOTS.length - 1)]!;
+}
+
+/** 承認ボタンの並び。枠の既定時刻を先頭にし、残りは時刻順（同じ時刻に2本並ばないように） */
+export function slotOrder(defaultSlot: Slot): Slot[] {
+  return [defaultSlot, ...SLOTS.filter((s) => s !== defaultSlot)];
+}
+
+/** 既定時刻がない古い投稿案のための、種類ごとの既定値 */
+const KIND_DEFAULT_SLOT: Record<PostKind, Slot> = { greeting: "07:30", business: "12:10", personal: "20:30" };
 
 const KIND_LABEL: Record<PostKind, string> = {
   greeting: "朝の挨拶（greeting）",
@@ -39,6 +45,8 @@ export function formatJst(d: Date): string {
 export type PostApprovalView = {
   draftId: number;
   kind: PostKind;
+  /** 枠の既定時刻（承認ボタンの先頭） */
+  slotTime: Slot | null;
   dayLabel: string;
   reason: string | null;
   body: string;
@@ -79,7 +87,7 @@ export function buildPostApprovalBlocks(v: PostApprovalView): { text: string; bl
     blocks.push({
       type: "actions",
       elements: [
-        ...SLOT_ORDER[v.kind].map((slot, i) => ({
+        ...slotOrder(v.slotTime ?? KIND_DEFAULT_SLOT[v.kind]).map((slot, i) => ({
           type: "button" as const,
           action_id: `post_approve_${slot.replace(":", "")}`,
           value: String(v.draftId),
