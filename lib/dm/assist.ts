@@ -85,6 +85,9 @@ async function readScreenshots(files: ReturnType<typeof imageFiles>): Promise<Sc
 
 const isDecline = (c: Classification) => c.category === "sales_pitch" || c.category === "invitation";
 
+/** 営業・招待のお断り文の前に添える一文（返信アシスタントのみ。【DM承認】のボタンの扱いは変えない） */
+export const DECLINE_NOTE = "営業・招待は返信しないのが基本です。送る場合のみ、以下をお使いください。";
+
 /** 返信案として表示する文面（営業・招待はお断り文） */
 export const pickReplyText = replyTextFor;
 
@@ -109,7 +112,7 @@ export function buildSummary(args: {
   if (args.lead === "created_or_updated") lines.push("*リード*: 登録／更新しました");
   if (toCheck.length) lines.push(`*要確認*\n${toCheck.map((x) => `• ${esc(x)}`).join("\n")}`);
   if (args.replyText) {
-    lines.push(isDecline(c) ? "↓ お断り文（コピーして X アプリから送信）" : "↓ 返信案（コピーして X アプリから送信）");
+    lines.push(isDecline(c) ? `${DECLINE_NOTE}\n↓ お断り文（コピーして X アプリから送信）` : "↓ 返信案（コピーして X アプリから送信）");
   } else if (c.category === "escalate") {
     lines.push("返信案は作っていません。内容を確認のうえ、ご自身で対応してください。");
   } else {
@@ -254,6 +257,7 @@ export async function reviseAssist(assist: AssistRow, messageTs: string, rawText
     await say(
       [
         `指示を反映しました（${instructions.length}回目）`,
+        ...(isDecline(c) ? [DECLINE_NOTE] : []),
         ...(checks.some((x) => x.startsWith(BLOCK_PREFIX))
           ? [`:warning: *要修正：このまま送らないでください*\n${checks.filter((x) => x.startsWith(BLOCK_PREFIX)).map((x) => `• ${esc(x.slice(BLOCK_PREFIX.length))}`).join("\n")}`]
           : []),

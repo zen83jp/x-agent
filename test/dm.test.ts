@@ -360,6 +360,21 @@ describe("返信アシスタント", () => {
     expect(text).toContain("返信案（コピーして X アプリから送信）");
   });
 
+  it("営業・招待はお断り文の前に「返信しないのが基本」と添える", () => {
+    for (const category of ["sales_pitch", "invitation"] as const) {
+      const text = buildSummary({
+        ctx: { history: [], newMessage: "x", sender: {} },
+        classification: cls(category),
+        replyText: "お断り文",
+        checks: [],
+        lead: "none",
+      });
+      expect(text).toContain("営業・招待は返信しないのが基本です。送る場合のみ、以下をお使いください。\n↓ お断り文");
+    }
+    const faq = buildSummary({ ctx: { history: [], newMessage: "x", sender: {} }, classification: cls("faq"), replyText: "回答", checks: [], lead: "none" });
+    expect(faq).not.toContain("返信しないのが基本");
+  });
+
   it("escalate は返信案なしで自分で対応するよう案内する", () => {
     const text = buildSummary({
       ctx: { history: [], newMessage: "x", sender: {} },
