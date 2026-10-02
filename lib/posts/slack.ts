@@ -27,7 +27,14 @@ const KIND_LABEL: Record<PostKind, string> = {
 
 const JST_OFFSET_MS = 9 * 60 * 60 * 1000;
 
-/** その時刻（JST）の次の発生時刻。今より後で最も近いもの */
+/** 指定した日（JST の YYYY-MM-DD）のその時刻 */
+export function slotTimeOn(date: string, slot: Slot): Date {
+  const [y, mo, d] = date.split("-").map(Number) as [number, number, number];
+  const [h, m] = slot.split(":").map(Number) as [number, number];
+  return new Date(Date.UTC(y, mo - 1, d, h, m) - JST_OFFSET_MS);
+}
+
+/** その時刻（JST）の次の発生時刻。今より後で最も近いもの（target_date がない古い案だけで使う） */
 export function nextSlotTime(slot: Slot, now: Date): Date {
   const [h, m] = slot.split(":").map(Number) as [number, number];
   const jst = new Date(now.getTime() + JST_OFFSET_MS);

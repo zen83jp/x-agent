@@ -1,7 +1,7 @@
 import type { ActionContext, ActionHandler, ActionResult } from "../slack/actions";
 import { db } from "../supabase";
 import { refreshDraftApproval } from "./approval";
-import { SLOTS, formatJst, nextSlotTime, type Slot } from "./slack";
+import { SLOTS, formatJst, nextSlotTime, slotTimeOn, type Slot } from "./slack";
 import { releaseTopic } from "./topics";
 
 function parseId(value: string | undefined): number {
@@ -12,12 +12,29 @@ function parseId(value: string | undefined): number {
 
 const ALREADY_DONE: ActionResult = { summary: "処理済みのため何もしませんでした" };
 
+export class SlotPassedError extends Error {
+  constructor(at: Date) {
+    super(`${formatJst(at)} はすでに過ぎているため承認できません。別の時刻を選ぶか、却下してください`);
+    this.name = "SlotPassedError";
+  }
+}
+
 /**
- * 承認: 承認待ちの案だけを、選んだ時刻の次の発生時刻で予約する（条件付き更新で二重承認しない）。
+ * 承認: 承認待ちの案だけを、**投稿案の target_date の**選んだ時刻で予約する（条件付き更新で二重承認しない）。
+ * その時刻がすでに過ぎていたら承認せずエラーにする（Slack のスレッドに「要手動対応」として出る）。
  * 投稿するのは review_status = 'approved' の案だけ（CLAUDE.md の絶対ルール）。
  */
 export async function approveDraft(id: number, slot: Slot, now = new Date()): Promise<ActionResult> {
-  const at = nextSlotTime(slot, now);
+  const { data: draft, error: readErr } = await db()
+    .from("post_drafts")
+    .select("target_date, review_status")
+    .eq("id", id)
+    .single();
+  if (readErr) throw readErr;
+  if (draft.review_status !== "awaiting_approval") return ALREADY_DONE;
+  const at = draft.target_date ? slotTimeOn(draft.target_date, slot) : nextSlotTime(slot, now);
+  if (at.getTime() <= now.getTime()) throw new SlotPassedError(at);
+
   const { data, error } = await db()
     .from("post_drafts")
     .update({ review_status: "approved", scheduled_at: at.toISOString(), approved_at: now.toISOString() })
