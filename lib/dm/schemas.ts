@@ -56,4 +56,9 @@ export type DmContext = {
   sender: { name?: string | null; username?: string | null; description?: string | null };
   /** ②でスクショに添えられた代表のメモ */
   note?: string | null;
+  /**
+   * 初回の返信か（こちらからまだ一度も送っていない相手か）。true なら自己紹介を入れる。
+   * ① 自動取得: スレッドにこちらから送った DM が1件もない／② スクショ: 右側（自分）の吹き出しがない／② テキストだけ: false
+   */
+  firstReply?: boolean;
 };

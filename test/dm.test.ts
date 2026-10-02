@@ -263,6 +263,19 @@ describe("返信アシスタント", () => {
       expect(ctx.history).toEqual([]);
     });
 
+    it("自分（右側）の吹き出しがなければ初回、あれば初回ではない", () => {
+      expect(contextFromScreenshot(shot([{ from: "them", text: "料金は？" }]), null)!.firstReply).toBe(true);
+      expect(
+        contextFromScreenshot(
+          shot([
+            { from: "me", text: "フォローありがとうございます" },
+            { from: "them", text: "料金は？" },
+          ]),
+          null,
+        )!.firstReply,
+      ).toBe(false);
+    });
+
     it("相手の発言がなければ null", () => {
       expect(contextFromScreenshot(shot([{ from: "me", text: "こんにちは" }]), null)).toBeNull();
     });

@@ -72,6 +72,7 @@ export async function draftReply(
     `<thread_history>\n${formatHistory(ctx.history)}\n</thread_history>`,
     `<new_message>\n${ctx.newMessage}\n</new_message>`,
     `<meeting_url>${env().MEETING_URL}</meeting_url>`,
+    `<first_reply>${ctx.firstReply ? "true" : "false"}</first_reply>`,
   ];
   if (revision) {
     parts.push(

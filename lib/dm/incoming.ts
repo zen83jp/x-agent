@@ -9,7 +9,7 @@ import { approvalModeFor } from "./slack";
 const HISTORY_LIMIT = 10;
 
 async function loadContext(messageId: number, threadId: number, sender: XUser | undefined): Promise<DmContext> {
-  const [current, history] = await Promise.all([
+  const [current, history, sent] = await Promise.all([
     db().from("dm_messages").select("body").eq("id", messageId).single(),
     db()
       .from("dm_messages")
@@ -18,13 +18,17 @@ async function loadContext(messageId: number, threadId: number, sender: XUser | 
       .lt("id", messageId)
       .order("id", { ascending: false })
       .limit(HISTORY_LIMIT),
+    // 初回判定: このスレッドでこちらから送った DM（代表が X アプリから手動で送ったものを含む）の件数
+    db().from("dm_messages").select("id", { count: "exact", head: true }).eq("thread_id", threadId).eq("direction", "out"),
   ]);
   if (current.error) throw current.error;
   if (history.error) throw history.error;
+  if (sent.error) throw sent.error;
   return {
     history: (history.data ?? []).reverse().map((m) => ({ from: m.direction === "out" ? "me" : "them", text: m.body })),
     newMessage: current.data.body,
     sender: { name: sender?.name, username: sender?.username, description: sender?.description },
+    firstReply: (sent.count ?? 0) === 0,
   };
 }
 

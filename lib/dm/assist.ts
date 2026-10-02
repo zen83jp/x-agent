@@ -47,6 +47,8 @@ export function contextFromScreenshot(shot: Screenshot, note: string | null): Dm
       .join("\n"),
     sender: { name: shot.counterpart_name, username: normalizeUsername(shot.counterpart_username) },
     note,
+    // 画面に自分（右側）の吹き出しが1つもなければ、まだ返信していない＝初回
+    firstReply: !msgs.some((m) => m.from === "me"),
   };
 }
 
@@ -140,7 +142,8 @@ export async function startAssist(args: {
       await db().from("dm_assists").update({ extracted: { screenshot: shot } }).eq("id", row.id);
       if (!ctx) return void (await say(":warning: スクショから相手のメッセージを読み取れませんでした。本文をテキストで貼ってください。"));
     } else if (text) {
-      ctx = { history: [], newMessage: text, sender: {} };
+      // テキストだけ貼られた場合は過去のやり取りが分からないので、初回として扱わない（自己紹介は入れない）
+      ctx = { history: [], newMessage: text, sender: {}, firstReply: false };
     } else {
       return void (await say(USAGE));
     }
