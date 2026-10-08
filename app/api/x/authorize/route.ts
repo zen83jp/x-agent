@@ -1,14 +1,14 @@
 import { NextResponse } from "next/server";
-import { isAdminRequest } from "@/lib/auth";
+import { basicChallenge, isAdminBasic } from "@/lib/auth";
 import { buildAuthorizeUrl, generatePkce, generateState } from "@/lib/x/oauth";
 
 export const dynamic = "force-dynamic";
 
 const COOKIE_MAX_AGE_SEC = 10 * 60;
 
-/** 代表アカウントでの X 認可を開始する。`?key=$ADMIN_SECRET` が必要 */
+/** 代表アカウントでの X 認可を開始する。ブラウザで開くと Basic 認証でパスワード（ADMIN_SECRET）を聞く */
 export function GET(req: Request) {
-  if (!isAdminRequest(req)) return new NextResponse("Forbidden", { status: 403 });
+  if (!isAdminBasic(req)) return basicChallenge();
 
   const { verifier, challenge } = generatePkce();
   const state = generateState();

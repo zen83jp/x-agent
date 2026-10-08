@@ -1,13 +1,13 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { isAdminRequest } from "@/lib/auth";
+import { adminUnauthorized, isAdminRequest } from "@/lib/auth";
 import { buildStyleGuideDraft } from "@/lib/style/build";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 /**
- * 文体ガイドの案を作る（管理用）。`POST ?key=$ADMIN_SECRET`、本文（任意）`{ "max": 300, "instructions": "…" }`
+ * 文体ガイドの案を作る（管理用）。`POST`、`Authorization: Bearer $ADMIN_SECRET`、本文（任意）`{ "max": 300, "instructions": "…" }`
  * 過去投稿の取得（$0.001／件。100件で約$0.10）と Claude の呼び出しが発生する。結果は未承認で保存される。
  */
 const bodySchema = z.object({
@@ -16,7 +16,7 @@ const bodySchema = z.object({
 });
 
 export async function POST(req: Request) {
-  if (!isAdminRequest(req)) return new NextResponse("Forbidden", { status: 403 });
+  if (!isAdminRequest(req)) return adminUnauthorized(req);
   const body = bodySchema.safeParse(await req.json().catch(() => ({})));
   if (!body.success) return NextResponse.json({ error: body.error.message }, { status: 400 });
   const draft = await buildStyleGuideDraft(body.data.max, body.data.instructions);

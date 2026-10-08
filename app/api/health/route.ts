@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { isAdminRequest } from "@/lib/auth";
+import { adminUnauthorized, isAdminRequest } from "@/lib/auth";
 import { env } from "@/lib/env";
 import { postMessage } from "@/lib/slack/client";
 import { spentTodayUsd } from "@/lib/x/budget";
@@ -11,10 +11,10 @@ type UsersMe = { data: { id: string; username: string } };
 
 /**
  * 疎通確認。X（ラッパー経由）→ 使用量記録 → Slack ボタン通知までを一通り動かす。
- * `?key=$ADMIN_SECRET` が必要。呼ぶたびに users.me の分だけ X API の費用がかかる。
+ * `Authorization: Bearer $ADMIN_SECRET` が必要。呼ぶたびに users.me の分だけ X API の費用がかかる。
  */
 export async function GET(req: Request) {
-  if (!isAdminRequest(req)) return new NextResponse("Forbidden", { status: 403 });
+  if (!isAdminRequest(req)) return adminUnauthorized(req);
 
   let xResult: string;
   try {
