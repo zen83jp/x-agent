@@ -183,3 +183,18 @@ export async function writeAndReview(ctx: WriteContext): Promise<Written | { fai
   }
   return { failed: lastReason || "審査を通る案を作れませんでした" };
 }
+
+/**
+ * 書き手・審査（Claude）を通さずに、本文に機械チェックだけをかける（「原文に戻して」「1つ前に戻して」用）。
+ * fatal（URL など）があれば戻さない。それ以外の問題は要確認として返す
+ */
+export async function checkWithoutWriting(
+  ctx: Pick<WriteContext, "kind" | "day" | "excludeDraftId">,
+  body: string,
+  theme: string,
+): Promise<{ fatal: string[]; review: ReviewNote }> {
+  const inputs = await loadInputs({ ...ctx });
+  const m = mechanicalCheck(body, inputs.pool);
+  const overlap = weekOverlapWarnings({ kind: ctx.kind, body, theme }, inputs.weekDrafts);
+  return { fatal: m.fatal, review: { verdict: "pass", issues: [], warnings: [...m.errors, ...m.warnings, ...overlap] } };
+}

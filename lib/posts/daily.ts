@@ -130,6 +130,7 @@ async function createSlot(date: string, index: number, slot: Slot, prefs: PostKi
       kind,
       slot_time: slotTimeForIndex(index),
       body: written.body,
+      original_body: written.body,
       reason: written.reason,
       theme: written.theme,
       review_note: written.review,

@@ -12,6 +12,9 @@ export type DraftRow = {
   slot_time: Slot | null;
   target_date: string | null;
   body: string;
+  /** 最初に生成した本文（原文）。010 より前に修正された案は、補えなければ null */
+  original_body: string | null;
+  theme: string | null;
   reason: string | null;
   review_note: ReviewNote | null;
   review_status: string;
@@ -24,7 +27,7 @@ export type DraftRow = {
 };
 
 export const DRAFT_SELECT =
-  "id, kind, slot_time, target_date, body, reason, review_note, review_status, topic_id, day_context, scheduled_at, slack_channel, slack_ts, post_topics!post_drafts_topic_id_fkey(body)";
+  "id, kind, slot_time, target_date, body, original_body, theme, reason, review_note, review_status, topic_id, day_context, scheduled_at, slack_channel, slack_ts, post_topics!post_drafts_topic_id_fkey(body)";
 
 export async function loadDraft(id: number): Promise<DraftRow> {
   const { data, error } = await db().from("post_drafts").select(DRAFT_SELECT).eq("id", id).single();

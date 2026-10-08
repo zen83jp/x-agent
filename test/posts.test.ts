@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { mechanicalCheck, weekOverlapWarnings } from "@/lib/posts/checks";
+import { classifyRevert } from "@/lib/posts/revert";
 import { DEFAULT_SLOTS, missingSlots, parseSlots } from "@/lib/posts/daily";
 import { generationDayOfWeek, isGenerationDay, mondayOf, targetDatesFrom, weeklyTargetDates } from "@/lib/posts/calendar";
 import { suggestFabricated } from "@/lib/posts/history";
@@ -266,4 +267,19 @@ describe("切り替えの安全策", () => {
     const notDay = await createWeeklyDrafts({ now: new Date("2026-10-09T08:00:00Z") }); // 10/9（金）は生成する日ではない
     expect(notDay.skipped).toBe("生成する日ではありません");
   });
+});
+
+describe("「戻す」指示の判定", () => {
+  it.each([
+    ["原文に戻して", "original"], ["原文に戻してください", "original"], ["最初の文に戻して", "original"], ["元の文章に戻して", "original"],
+    ["元のままで", "original"], ["元のままでお願いします", "original"], ["原文のままでいいです", "original"], ["オリジナルに戻して", "original"],
+    ["前の案に戻して", "previous"], ["ひとつ前に戻して", "previous"], ["1つ前に戻して", "previous"], ["一つ前に戻してください", "previous"],
+    ["さっきの文に戻して", "previous"], ["直前の版に戻して", "previous"],
+    ["戻して", "ambiguous"], ["元に戻して", "ambiguous"], ["戻してください", "ambiguous"],
+  ] as const)("%s → %s", (t, kind) => expect(classifyRevert(t)).toBe(kind));
+
+  it.each(["原文に近づけて", "元の言い回しを残して", "最後の行を元の文章に戻して", "最初の一文だけ原文に戻して", "原文の雰囲気に戻して", "もっと短く"])(
+    "部分的な指示は通常の修正: %s",
+    (t) => expect(classifyRevert(t)).toBeNull(),
+  );
 });
