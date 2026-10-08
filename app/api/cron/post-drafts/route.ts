@@ -1,13 +1,14 @@
 import { runCron } from "@/lib/cron";
-import { createScheduledDrafts } from "@/lib/posts/daily";
+import { createWeeklyDrafts } from "@/lib/posts/daily";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 /**
- * Vercel Cron（平日 9:00 JST）: 翌日から次の平日までの各日の投稿案を作って【投稿承認】に出す。
- * 祝日は中で判定して何もしない。
+ * Vercel Cron（月〜木 17:00〜17:55 JST に5分おき）: 週1回の投稿案の生成。
+ * 生成する日（原則木曜、休みなら直前の平日）だけ、翌日から翌週の日曜までのまだ案が無い枠を作る。
+ * 1回の実行で終わらなかった分は、次の実行で続きから作る。
  */
 export function GET(req: Request) {
-  return runCron(req, "投稿案の作成", () => createScheduledDrafts());
+  return runCron(req, "投稿案の作成", () => createWeeklyDrafts());
 }

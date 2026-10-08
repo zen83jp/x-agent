@@ -87,6 +87,46 @@ export function targetDatesFrom(today: string): string[] {
   return dates;
 }
 
+/** その日を含む週の月曜日（YYYY-MM-DD） */
+export function mondayOf(date: string): string {
+  const w = weekday(date); // 0=日
+  return addDays(date, w === 0 ? -6 : 1 - w);
+}
+
+/**
+ * その週に投稿案を生成する日。原則は木曜。木曜が休み（祝日・年末年始など）なら、その週の直前の平日に前倒しする。
+ * 月〜木がすべて休みなら月曜にする
+ */
+export function generationDayOfWeek(monday: string): string {
+  for (let d = addDays(monday, 3); d >= monday; d = addDays(d, -1)) {
+    if (!isDayOff(d)) return d;
+  }
+  return monday;
+}
+
+export function isGenerationDay(today: string): boolean {
+  return generationDayOfWeek(mondayOf(today)) === today;
+}
+
+/**
+ * 週の生成の対象の日付: 翌日から「翌週の日曜」まで。翌週の月〜日が必ず入り、今週の残りの日も含む
+ * （まだ無い枠だけを作るので、今週の残りの日は作成済みなら何もしない）
+ */
+export function weeklyTargetDates(today: string): string[] {
+  const nextSunday = addDays(mondayOf(today), 13);
+  const dates: string[] = [];
+  for (let d = addDays(today, 1); d <= nextSunday; d = addDays(d, 1)) dates.push(d);
+  return dates;
+}
+
+/** 同じ週（月〜日）の日付の範囲 */
+export function weekRange(date: string): { from: string; to: string } {
+  const from = mondayOf(date);
+  return { from, to: addDays(from, 6) };
+}
+
+export { addDays };
+
 /** JST の日付文字列（YYYY-MM-DD） */
 export function jstDateOf(now: Date): string {
   return new Date(now.getTime() + JST_OFFSET_MS).toISOString().slice(0, 10);

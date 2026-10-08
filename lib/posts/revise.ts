@@ -4,6 +4,7 @@ import { postThreadReply } from "../slack/client";
 import { db } from "../supabase";
 import { dayContext } from "./calendar";
 import { loadDraft, refreshDraftApproval, type DraftRow } from "./approval";
+import { reviewNotes } from "./slack";
 import { writeAndReview } from "./writer";
 
 export async function findDraftByThread(threadTs: string): Promise<DraftRow | null> {
@@ -44,22 +45,19 @@ export async function reviseDraft(draft: DraftRow, messageTs: string, rawText: s
     // 過去に保存した指示にアプリ経由の定型の文言が残っていても読み飛ばす
     const instructions = (history ?? []).map((h) => stripSlackFooter(h.instruction));
     const topic = Array.isArray(draft.post_topics) ? draft.post_topics[0] : draft.post_topics;
-    const { data: siblings } = await db()
-      .from("post_drafts")
-      .select("body")
-      .eq("target_date", draft.day_context?.date ?? "")
-      .neq("id", draft.id)
-      .in("review_status", ["awaiting_approval", "approved"]);
 
+    // 最初の修正のときだけ、修正前の本文を【原文】としてスレッドに残す（1スレッド目は最新の案に差し替えるため）
+    if (instructions.length === 1) await say(`【原文】\n${draft.body}`, false);
+
+    // 同じ週の案（前日を含む）は writer が DB から読む
     const written = await writeAndReview({
       kind: draft.kind,
       day: draft.day_context ?? dayContext(new Date().toISOString().slice(0, 10)),
       topic: topic?.body,
       revision: { previousBody: draft.body, instructions },
       excludeDraftId: draft.id,
-      batchBodies: (siblings ?? []).map((s) => s.body),
     });
-    if ("failed" in written) return void (await say(`:warning: 作り直しに失敗しました（${esc(written.failed)}）`));
+    if ("failed" in written) return void (await say(`:warning: 修正できませんでした（${esc(written.failed)}）`));
 
     // 承認待ちのままのときだけ差し替える（作り直しの間に承認・却下されていたら上書きしない）
     const { data: updated, error: uErr } = await db()
@@ -73,7 +71,13 @@ export async function reviseDraft(draft: DraftRow, messageTs: string, rawText: s
     if (!updated?.length) return void (await say("作り直している間に承認・却下されたため、差し替えませんでした。"));
 
     await refreshDraftApproval(draft.id);
-    await say(`指示を反映しました（${instructions.length}回目）。上のメッセージを差し替えました。`);
+    const notes = reviewNotes(written.review);
+    await say(
+      [
+        `修正しました（${instructions.length}回目）。上のメッセージを最新の案に差し替えました。`,
+        ...(notes.length ? [`:warning: *要確認*\n${notes.map((n) => `• ${esc(n)}`).join("\n")}`] : []),
+      ].join("\n"),
+    );
     await say(written.body, false);
   } catch (e) {
     console.error("reviseDraft failed", e);

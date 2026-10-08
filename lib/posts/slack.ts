@@ -60,6 +60,14 @@ export function formatJst(d: Date): string {
   return `${jst.getUTCMonth() + 1}/${jst.getUTCDate()}（${wd}）${jst.getUTCHours()}:${String(jst.getUTCMinutes()).padStart(2, "0")}`;
 }
 
+/** 要確認の項目（審査で直した点と、機械チェックの注意）。スレッドに詳細として出す */
+export function reviewNotes(review: ReviewNote | null | undefined): string[] {
+  return [
+    ...(review?.issues ?? []).map((i) => `審査で直した点（${i.type}）: ${i.detail}`),
+    ...(review?.warnings ?? []),
+  ];
+}
+
 export type PostApprovalView = {
   draftId: number;
   kind: PostKind;
@@ -99,12 +107,9 @@ export function buildPostApprovalBlocks(v: PostApprovalView): { text: string; bl
   if (v.topic) {
     blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: `元のネタ: ${esc(v.topic)}` }] });
   }
-  const notes = [
-    ...(v.review?.issues ?? []).map((i) => `審査で直した点（${i.type}）: ${i.detail}`),
-    ...(v.review?.warnings ?? []),
-  ];
-  if (notes.length) {
-    blocks.push({ type: "section", text: { type: "mrkdwn", text: `*要確認*\n${notes.map((n) => `• ${esc(n)}`).join("\n")}` } });
+  // 要確認の詳細はスレッドに出し、1スレッド目には有無だけを短く表示する（承認する人が見落とさないように）
+  if (reviewNotes(v.review).length) {
+    blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: ":warning: *要確認あり（スレッド参照）*" }] });
   }
   if (v.done) {
     blocks.push({ type: "context", elements: [{ type: "mrkdwn", text: v.done }] });

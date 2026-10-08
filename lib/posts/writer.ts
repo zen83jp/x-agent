@@ -1,7 +1,7 @@
 import { generateJson, loadPrompt } from "../claude";
 import { db } from "../supabase";
-import { describeDay, type DayContext } from "./calendar";
-import { mechanicalCheck } from "./checks";
+import { addDays, describeDay, weekRange, type DayContext } from "./calendar";
+import { mechanicalCheck, weekOverlapWarnings, type WeekDraft } from "./checks";
 import { recentHistory } from "./history";
 import { reviewSchema, writerSchema, type PostKind, type ReviewNote } from "./schemas";
 
@@ -9,6 +9,11 @@ const RECENT_POSTS = 30;
 const AVOID_ANGLES = 40;
 const RECENT_DRAFTS = 20;
 const DUPLICATE_POOL = 200;
+/**
+ * 書いて審査を通すまでの最大回数。週の生成では同じ週の案と切り口が重なって不可になることがあるので、
+ * 前の案が使えなかった理由を渡して最大3回まで書き直す（不可にならなければ1回で終わる）
+ */
+const MAX_ATTEMPTS = 3;
 
 export type WriteContext = {
   kind: PostKind;
@@ -18,8 +23,11 @@ export type WriteContext = {
   revision?: { previousBody: string; instructions: string[] };
   /** 自分自身（作り直し中の案）を重複判定から外す */
   excludeDraftId?: number;
-  /** 同じ日の他の投稿案（締めの言い回しを変えるため） */
-  batchBodies?: string[];
+  /**
+   * 同じ週（前日を含む）の他の投稿案。締め・特徴的な言い回し・テーマを重ねないため。
+   * 省略すると DB から読む（試験生成では、DB に書かずに作った案をここで渡す）
+   */
+  weekDrafts?: WeekDraft[];
   /** 承認されずに期限切れになった案（参考。使い回さない） */
   material?: { body: string; reason: string | null } | null;
 };
@@ -27,7 +35,7 @@ export type WriteContext = {
 export type Written = { body: string; reason: string; theme: string; review: ReviewNote };
 
 type Inputs = {
-  previousDay: string[];
+  weekDrafts: WeekDraft[];
   styleGuide: string;
   insights: string;
   recentPosts: string[];
@@ -38,13 +46,28 @@ type Inputs = {
 
 /** 前日の日付（YYYY-MM-DD） */
 export function previousDate(date: string): string {
-  const d = new Date(`${date}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() - 1);
-  return d.toISOString().slice(0, 10);
+  return addDays(date, -1);
 }
 
-async function loadInputs(date: string, excludeDraftId?: number): Promise<Inputs> {
-  const [style, insight, history, drafts, prevDay] = await Promise.all([
+/** 同じ週（月〜日）と前日の、生きている投稿案（承認待ち・承認済み・投稿中・投稿済み） */
+export async function loadWeekDrafts(date: string, excludeDraftId?: number): Promise<WeekDraft[]> {
+  const { to } = weekRange(date);
+  const from = [weekRange(date).from, previousDate(date)].sort()[0]!;
+  const { data, error } = await db()
+    .from("post_drafts")
+    .select("id, kind, body, theme, target_date")
+    .gte("target_date", from)
+    .lte("target_date", to)
+    .in("review_status", ["awaiting_approval", "approved", "posting", "posted"]);
+  if (error) throw error;
+  return (data ?? [])
+    .filter((d) => d.id !== excludeDraftId && d.kind)
+    .map((d) => ({ kind: d.kind, body: d.body, theme: d.theme ?? "", date: d.target_date }));
+}
+
+async function loadInputs(ctx: WriteContext): Promise<Inputs> {
+  const excludeDraftId = ctx.excludeDraftId;
+  const [style, insight, history, drafts, week] = await Promise.all([
     db().from("style_guide").select("content").eq("approved", true).order("version", { ascending: false }).limit(1),
     db().from("insights").select("summary").order("created_at", { ascending: false }).limit(1),
     recentHistory(DUPLICATE_POOL),
@@ -56,19 +79,13 @@ async function loadInputs(date: string, excludeDraftId?: number): Promise<Inputs
       .neq("review_status", "expired")
       .order("id", { ascending: false })
       .limit(RECENT_DRAFTS + 1),
-    // 前日に投稿予定の案（承認待ち・承認済み・投稿済み）
-    db()
-      .from("post_drafts")
-      .select("id, body")
-      .eq("target_date", previousDate(date))
-      .in("review_status", ["awaiting_approval", "approved", "posting", "posted"]),
+    ctx.weekDrafts ? Promise.resolve(ctx.weekDrafts) : loadWeekDrafts(ctx.day.date, excludeDraftId),
   ]);
-  if (prevDay.error) throw prevDay.error;
   if (drafts.error) throw drafts.error;
   const otherDrafts = (drafts.data ?? []).filter((d) => d.id !== excludeDraftId).slice(0, RECENT_DRAFTS);
   const real = history.filter((h) => !h.fabricated);
   return {
-    previousDay: (prevDay.data ?? []).filter((d) => d.id !== excludeDraftId).map((d) => d.body),
+    weekDrafts: week,
     styleGuide: style.data?.[0]?.content ?? "（未整備）",
     insights: insight.data?.[0]?.summary ?? "（まだなし）",
     recentPosts: real.slice(0, RECENT_POSTS).map((h) => h.body),
@@ -92,22 +109,23 @@ function commonParts(ctx: WriteContext, inputs: Inputs): string[] {
     `<recent_posts>\n${list(inputs.recentPosts)}\n</recent_posts>`,
     `<avoid_angles>\n${list(inputs.avoidAngles)}\n</avoid_angles>`,
     `<recent_drafts>\n${list(inputs.recentDrafts)}\n</recent_drafts>`,
-    `<previous_day_drafts>\n${list(inputs.previousDay)}\n</previous_day_drafts>`,
-    `<batch_drafts>\n${list(ctx.batchBodies ?? [])}\n</batch_drafts>`,
+    `<week_drafts>\n${inputs.weekDrafts
+      .map((d) => `--- [${d.date.slice(5).replace("-", "/")} ${d.kind}] テーマ: ${d.theme}\n${d.body}`)
+      .join("\n")}\n</week_drafts>`,
   ];
 }
 
 /**
  * 投稿案を1つ書き、機械チェック → 審査（reviewer.md）→ 機械チェックを通す。
- * 不可なら1回だけ書き直す。2回とも通らなければ null と理由を返す。
+ * 不可なら理由を渡して書き直す（最大 MAX_ATTEMPTS 回）。すべて通らなければ失敗とその理由を返す。
  */
 export async function writeAndReview(ctx: WriteContext): Promise<Written | { failed: string }> {
   if (ctx.kind === "personal" && !ctx.topic) return { failed: "personal にはネタが必要です" };
-  const inputs = await loadInputs(ctx.day.date, ctx.excludeDraftId);
+  const inputs = await loadInputs(ctx);
   const [writerPrompt, reviewerPrompt] = await Promise.all([loadPrompt("post_writer"), loadPrompt("reviewer")]);
   let lastReason = "";
 
-  for (let attempt = 0; attempt < 2; attempt++) {
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     const writerUser = [
       ...commonParts(ctx, inputs),
       `<insights>\n${inputs.insights}\n</insights>`,
@@ -128,7 +146,7 @@ export async function writeAndReview(ctx: WriteContext): Promise<Written | { fai
       continue;
     }
 
-    const pre = mechanicalCheck(w.data.body, inputs.pool, inputs.previousDay);
+    const pre = mechanicalCheck(w.data.body, inputs.pool);
     if (pre.fatal.length) {
       lastReason = pre.fatal.join("、");
       continue;
@@ -150,16 +168,17 @@ export async function writeAndReview(ctx: WriteContext): Promise<Written | { fai
     }
 
     const body = r.data.verdict === "fix" && r.data.fixed_body ? r.data.fixed_body : w.data.body;
-    const post = mechanicalCheck(body, inputs.pool, inputs.previousDay);
+    const post = mechanicalCheck(body, inputs.pool);
     if (post.fatal.length || post.errors.length) {
       lastReason = [...post.fatal, ...post.errors].join("、");
       continue;
     }
+    const overlap = weekOverlapWarnings({ kind: ctx.kind, body, theme: w.data.theme }, inputs.weekDrafts);
     return {
       body,
       reason: w.data.reason,
       theme: w.data.theme,
-      review: { verdict: r.data.verdict, issues: r.data.issues, warnings: post.warnings },
+      review: { verdict: r.data.verdict, issues: r.data.issues, warnings: [...post.warnings, ...overlap] },
     };
   }
   return { failed: lastReason || "審査を通る案を作れませんでした" };

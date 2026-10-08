@@ -1,9 +1,10 @@
-import { postMessage, updateMessage, withLabel } from "../slack/client";
+import { esc } from "../dm/slack";
+import { postMessage, postThreadReply, updateMessage, withLabel } from "../slack/client";
 import { db } from "../supabase";
 import { describeDay, type DayContext } from "./calendar";
 import type { PostKind, ReviewNote } from "./schemas";
 import type { Slot } from "./slack";
-import { buildPostApprovalBlocks, type PostApprovalView } from "./slack";
+import { buildPostApprovalBlocks, reviewNotes, type PostApprovalView } from "./slack";
 
 export type DraftRow = {
   id: number;
@@ -53,6 +54,11 @@ export async function postDraftApproval(id: number): Promise<void> {
   const { channel, ts } = await postMessage({ kind: "post_approval", ...buildPostApprovalBlocks(viewOf(d)) });
   const { error } = await db().from("post_drafts").update({ slack_channel: channel, slack_ts: ts }).eq("id", id);
   if (error) throw error;
+  // 要確認の詳細はスレッドへ（1スレッド目には「要確認あり（スレッド参照）」だけ）
+  const notes = reviewNotes(d.review_note);
+  if (notes.length) {
+    await postThreadReply({ channel, threadTs: ts, text: `:warning: *要確認*\n${notes.map((n) => `• ${esc(n)}`).join("\n")}` });
+  }
 }
 
 /** 保存しておいたチャンネル ID と ts で承認メッセージを描き直す（done があればボタンを消す） */

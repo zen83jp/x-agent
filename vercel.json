@@ -8,7 +8,7 @@
     },
     {
       "path": "/api/cron/post-drafts",
-      "schedule": "0 0 * * 1-5"
+      "schedule": "*/5 8 * * 1-4"
     },
     {
       "path": "/api/cron/post-publish",

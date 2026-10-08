@@ -116,14 +116,18 @@ describe("承認と投稿", () => {
     expect(state.scheduled_at).toBe("2026-10-03T22:30:00.000Z"); // 10/4 7:30 JST
   });
 
+  // 実行日に左右されないよう、承認の時刻は固定する（10/3 分の締切 10/3 7:30 より前）
+  const BEFORE_DEADLINE = new Date("2026-10-02T12:00:00Z");
+
   it("二重押下でも承認は1回だけ", async () => {
-    const [a, b] = await Promise.all([approveDraft(1, "07:30"), approveDraft(1, "12:10")]);
+    const [a, b] = await Promise.all([approveDraft(1, "07:30", BEFORE_DEADLINE), approveDraft(1, "12:10", BEFORE_DEADLINE)]);
     expect([a.summary, b.summary].filter((s) => s.startsWith("承認"))).toHaveLength(1);
     expect(state.status).toBe("approved");
   });
 
   it("承認後の却下は何もしない", async () => {
-    await approveDraft(1, "07:30");
+    await approveDraft(1, "07:30", BEFORE_DEADLINE);
+    expect(state.status).toBe("approved");
     expect((await rejectDraft(1)).summary).toBe("処理済みのため何もしませんでした");
   });
 
